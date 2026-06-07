@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2"
+     xmlns:gx="http://www.google.com/kml/ext/2.2">
+  <Document>
+    <name>Ornek GES / Earth kamera yolu</name>
+    <Snippet>Hacettepe B-5 bolgesi etrafinda basit dikdortgen orbit (lon, lat, m).</Snippet>
+    <description>
+      Bu dosya Digital Twin KML oynatici ile uyumludur (gx:coord: boylam enlem yukseklik_m).
+      Kendi Google Earth Studio projenizden: Render &gt; Export &gt; KML (veya Track) secip
+      benzer gx:Track / gx:coord ciktisi alabilirsiniz.
+    </description>
+    <Placemark>
+      <name>Campus orbit ornegi</name>
+      <gx:Track>
+        <gx:coord>32.72950 39.87135 92.0</gx:coord>
+        <gx:coord>32.72962 39.87142 94.0</gx:coord>
+        <gx:coord>32.72978 39.87152 96.0</gx:coord>
+        <gx:coord>32.72992 39.87162 98.0</gx:coord>
+        <gx:coord>32.73008 39.87170 100.0</gx:coord>
+        <gx:coord>32.73022 39.87175 101.0</gx:coord>
+        <gx:coord>32.73038 39.87172 100.0</gx:coord>
+        <gx:coord>32.73048 39.87162 98.0</gx:coord>
+        <gx:coord>32.73052 39.87148 96.0</gx:coord>
+        <gx:coord>32.73045 39.87135 94.0</gx:coord>
+        <gx:coord>32.73030 39.87128 93.0</gx:coord>
+        <gx:coord>32.73012 39.87125 92.0</gx:coord>
+        <gx:coord>32.72995 39.87128 91.0</gx:coord>
+        <gx:coord>32.72978 39.87132 91.0</gx:coord>
+        <gx:coord>32.72962 39.87134 92.0</gx:coord>
+        <gx:coord>32.72950 39.87135 92.0</gx:coord>
+      </gx:Track>
+    </Placemark>
+  </Document>
+</kml>

@@ -1,0 +1,50 @@
+{
+  "routeId": "demo-route-01",
+  "description": "Örnek waypoint rotası - Digital Twin test",
+  "waypoints": [
+    {
+      "index": 0,
+      "worldPosition": { "x": 0.0, "y": 0.0, "z": 0.0 },
+      "gridPosition": { "x": 0, "y": 0, "z": 0 },
+      "metadata": {
+        "speedOverride": -1.0,
+        "holdTimeSeconds": 0.0,
+        "actionId": "",
+        "label": "Start"
+      }
+    },
+    {
+      "index": 1,
+      "worldPosition": { "x": 5.0, "y": 0.5, "z": 2.0 },
+      "gridPosition": { "x": 1, "y": 0, "z": 0 },
+      "metadata": {
+        "speedOverride": -1.0,
+        "holdTimeSeconds": 0.0,
+        "actionId": "",
+        "label": ""
+      }
+    },
+    {
+      "index": 2,
+      "worldPosition": { "x": 10.0, "y": 1.0, "z": 5.0 },
+      "gridPosition": { "x": 2, "y": 0, "z": 1 },
+      "metadata": {
+        "speedOverride": 5.0,
+        "holdTimeSeconds": 2.0,
+        "actionId": "photo",
+        "label": "Waypoint 2"
+      }
+    },
+    {
+      "index": 3,
+      "worldPosition": { "x": 15.0, "y": 0.0, "z": 8.0 },
+      "gridPosition": { "x": 3, "y": 0, "z": 1 },
+      "metadata": {
+        "speedOverride": -1.0,
+        "holdTimeSeconds": 0.0,
+        "actionId": "",
+        "label": "End"
+      }
+    }
+  ]
+}

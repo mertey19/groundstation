@@ -206,13 +206,21 @@ namespace GroundStation.DigitalTwin
                     continue;
                 }
 
-                var go = UpsertEntity(_obstacles, obstacleRoot, obstaclePrefab, delta.id, new Color(0.92f, 0.26f, 0.26f, 0.92f));
+                float sev = Mathf.Clamp01(delta.severity);
+                Color obsColor = Color.Lerp(new Color(1f, 0.78f, 0.22f, 1f), new Color(1f, 0.20f, 0.16f, 1f), sev);
+                var go = UpsertEntity(_obstacles, obstacleRoot, obstaclePrefab, delta.id, obsColor, PrimitiveType.Sphere, true);
                 if (go == null)
                     continue;
                 changed = true;
-                PlaceByGeo(go.transform, delta.latitude, delta.longitude, markerYOffset);
-                float size = Mathf.Max(0.5f, delta.radiusM > 0.01f ? delta.radiusM * 2f : obstacleDefaultSize);
-                go.transform.localScale = new Vector3(size, Mathf.Max(0.2f, size * 0.25f), size);
+                PlaceByGeo(go.transform, delta.latitude, delta.longitude, markerYOffset + 1f);
+                float size = Mathf.Max(0.6f, delta.radiusM > 0.01f ? delta.radiusM * 2f : obstacleDefaultSize);
+                go.transform.localScale = new Vector3(size, size, size);
+                var obsR = go.GetComponent<Renderer>();
+                if (obsR != null)
+                {
+                    obsR.material.color = obsColor;
+                    obsR.material.SetColor("_EmissionColor", new Color(obsColor.r, obsColor.g, obsColor.b) * (0.35f + 0.5f * sev));
+                }
             }
             return changed;
         }
@@ -338,19 +346,20 @@ namespace GroundStation.DigitalTwin
                     continue;
                 }
 
-                var go = UpsertEntity(_targets, targetRoot, targetPrefab, delta.id, new Color(0.2f, 0.8f, 1f, 0.92f));
+                Color tColor = delta.reached ? new Color(0.25f, 0.95f, 0.35f, 1f) : new Color(0.2f, 0.8f, 1f, 1f);
+                var go = UpsertEntity(_targets, targetRoot, targetPrefab, delta.id, tColor, PrimitiveType.Capsule, true);
                 if (go == null)
                     continue;
                 changed = true;
-                PlaceByGeo(go.transform, delta.latitude, delta.longitude, markerYOffset);
-                float size = Mathf.Max(0.5f, targetDefaultSize);
-                go.transform.localScale = Vector3.one * size;
+                float tSize = Mathf.Max(0.6f, targetDefaultSize);
+                PlaceByGeo(go.transform, delta.latitude, delta.longitude, markerYOffset + tSize);
+                go.transform.localScale = new Vector3(tSize * 0.55f, tSize, tSize * 0.55f);
 
                 var renderer = go.GetComponent<Renderer>();
                 if (renderer != null)
                 {
-                    Color c = delta.reached ? new Color(0.2f, 0.9f, 0.3f, 0.95f) : new Color(0.2f, 0.8f, 1f, 0.92f);
-                    renderer.material.color = c;
+                    renderer.material.color = tColor;
+                    renderer.material.SetColor("_EmissionColor", new Color(tColor.r, tColor.g, tColor.b) * 0.55f);
                 }
             }
             return changed;
@@ -374,7 +383,9 @@ namespace GroundStation.DigitalTwin
                     continue;
                 }
 
-                var go = UpsertEntity(_voxels, voxelRoot, voxelPrefab, delta.id, new Color(0.95f, 0.68f, 0.18f, 0.72f));
+                float occ = Mathf.Clamp01(delta.occupancy);
+                Color voxColor = Color.Lerp(new Color(0.25f, 0.72f, 1f, 1f), new Color(1f, 0.32f, 0.2f, 1f), occ);
+                var go = UpsertEntity(_voxels, voxelRoot, voxelPrefab, delta.id, voxColor, PrimitiveType.Cube, true);
                 if (go == null)
                     continue;
                 changed = true;
@@ -384,9 +395,8 @@ namespace GroundStation.DigitalTwin
                 var renderer = go.GetComponent<Renderer>();
                 if (renderer != null)
                 {
-                    var c = renderer.material.color;
-                    c.a = Mathf.Clamp01(Mathf.Max(0.2f, delta.occupancy));
-                    renderer.material.color = c;
+                    renderer.material.color = voxColor;
+                    renderer.material.SetColor("_EmissionColor", new Color(voxColor.r, voxColor.g, voxColor.b) * (0.2f + 0.4f * occ));
                 }
             }
             return changed;
@@ -415,19 +425,34 @@ namespace GroundStation.DigitalTwin
 
         private static GameObject UpsertEntity(Dictionary<string, GameObject> map, Transform root, GameObject prefab, string id, Color color)
         {
+            return UpsertEntity(map, root, prefab, id, color, PrimitiveType.Cylinder, false);
+        }
+
+        private static GameObject UpsertEntity(Dictionary<string, GameObject> map, Transform root, GameObject prefab, string id, Color color, PrimitiveType primitive, bool emissive)
+        {
             if (map.TryGetValue(id, out var existing) && existing != null)
                 return existing;
 
-            GameObject go = prefab != null ? Instantiate(prefab, root) : GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            GameObject go = prefab != null ? Instantiate(prefab, root) : GameObject.CreatePrimitive(primitive);
             go.name = id;
             if (root != null)
                 go.transform.SetParent(root, true);
 
+            // Mission objelerinde fiziksel collider gereksiz (sadece gorsel + transform takibi).
+            var col = go.GetComponent<Collider>();
+            if (col != null) Destroy(col);
+
             var renderer = go.GetComponent<Renderer>();
             if (renderer != null)
             {
-                var mat = new Material(Shader.Find("Unlit/Color"));
+                var shader = Shader.Find("Standard");
+                var mat = shader != null ? new Material(shader) : new Material(Shader.Find("Unlit/Color"));
                 mat.color = color;
+                if (emissive && shader != null)
+                {
+                    mat.EnableKeyword("_EMISSION");
+                    mat.SetColor("_EmissionColor", new Color(color.r, color.g, color.b) * 0.55f);
+                }
                 renderer.material = mat;
                 renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 renderer.receiveShadows = false;

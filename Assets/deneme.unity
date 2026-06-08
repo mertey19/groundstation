@@ -373,6 +373,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   moveSpeed: 100
+  mouseDragPanSpeed: 1
   zoomSpeed: 200
   minHeight: 1.5
   maxHeight: 1200
@@ -981,6 +982,50 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 140362048}
   m_CullTransparentMesh: 1
+--- !u!1 &150062205
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 150062207}
+  - component: {fileID: 150062206}
+  m_Layer: 0
+  m_Name: LiveLocationTracker
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &150062206
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 150062205}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7bac3e80091351f4f8ec0b6fb67f6bf8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+--- !u!4 &150062207
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 150062205}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &153120815
 GameObject:
   m_ObjectHideFlags: 0
@@ -1622,6 +1667,22 @@ MonoBehaviour:
   presetGenericButton: {fileID: 0}
   presetCorridorButton: {fileID: 0}
   presetFastButton: {fileID: 0}
+  startHidden: 1
+  createRuntimeToggleButton: 1
+  togglePanelButton: {fileID: 0}
+  openPanelButtonText: Survey Ac
+  closePanelButtonText: Survey Kapat
+  toggleButtonSize: {x: 180, y: 44}
+  toggleButtonAnchoredPosition: {x: -120, y: -110}
+  autoScaleToggleButtonForSmallScreens: 1
+  designResolution: {x: 1920, y: 1080}
+  minToggleScale: 0.78
+  simplifyUi: 1
+  startWithAdvancedHidden: 1
+  createAdvancedToggleButton: 1
+  toggleAdvancedButton: {fileID: 0}
+  showAdvancedButtonText: Gelismis
+  hideAdvancedButtonText: Basit
   defaultFrontOverlap: 75
   defaultSideOverlap: 65
   defaultCameraHFov: 78
@@ -2440,6 +2501,7 @@ MonoBehaviour:
   fallbackPlaneHeight: 0
   defaultWaypointAltitude: 10
   clickCooldownSeconds: 0.25
+  requirePlacementModeFromMenu: 1
   logRaycastHits: 1
   clampWaypointToMapBounds: 1
 --- !u!1 &459812617
@@ -2715,6 +2777,9 @@ MonoBehaviour:
   referenceWidth: 1920
   referenceHeight: 1080
   matchWidthOrHeight: 0.5
+  autoScaleForSmallScreens: 1
+  minSmallScreenScale: 0.78
+  maxSmallScreenScale: 1
   screenInset: 20
   telemetryWidth: 300
   telemetryHeight: 220
@@ -4409,6 +4474,64 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 777746901}
   m_CullTransparentMesh: 1
+--- !u!1 &819065050
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 819065052}
+  - component: {fileID: 819065051}
+  m_Layer: 0
+  m_Name: DigitalTwinMissionDemoPlayer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &819065051
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 819065050}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4a9675dea869da74ba39e65a9ff2d83b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  ingressBehaviour: {fileID: 0}
+  abstractMap: {fileID: 0}
+  autoPlayOnStart: 0
+  startDelaySeconds: 1
+  frameInterval: 0.2
+  totalFrames: 170
+  loop: 0
+  fallbackCenterLatLon: {x: 39.8719, y: 32.7302}
+  recenterMapOnStart: 1
+  areaLatDeg: 0.0006
+  areaLonDeg: 0.00085
+  baseAltitudeM: 40
+  authToken: simurgh-2026
+  showHud: 1
+--- !u!4 &819065052
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 819065050}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &839090200
 GameObject:
   m_ObjectHideFlags: 0
@@ -4558,7 +4681,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 1
     m_VerticalOverflow: 0
     m_LineSpacing: 1
-  m_Text: Way
+  m_Text: Wayp
 --- !u!222 &847118168
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -5026,6 +5149,7 @@ MonoBehaviour:
   routeManager: {fileID: 0}
   remoteState: {fileID: 0}
   missionEngine: {fileID: 0}
+  imageryService: {fileID: 0}
   applyYaw: 1
   applyPitchRoll: 0
   smoothPoseUpdates: 1
@@ -5763,6 +5887,55 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 260.26813, y: 285.67743, z: -4.981497}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1073276678
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1073276680}
+  - component: {fileID: 1073276679}
+  m_Layer: 0
+  m_Name: DigitalTwinMeshTopologyPanel
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1073276679
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1073276678}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a59e03f7ee3a85344ad687ed7c5a2285, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  remoteState: {fileID: 0}
+  corner: 2
+  panelSize: {x: 338, y: 258}
+  margin: {x: 16, y: 16}
+  showWhenNoData: 1
+--- !u!4 &1073276680
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1073276678}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -7432,7 +7605,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   abstractMap: {fileID: 1593283876}
-  onlyAddIfMissing: 1
+  addOnStart: 1
+  useRealHeights: 0
+  buildingHeight: 18
 --- !u!114 &1593283883
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -7694,6 +7869,9 @@ MonoBehaviour:
   udpIngress: {fileID: 1631584063}
   adaptiveFlow: {fileID: 1631584060}
   recorder: {fileID: 1631584059}
+  sampleScenarioPlayer: {fileID: 0}
+  imageryService: {fileID: 0}
+  kmlPosePlayer: {fileID: 0}
 --- !u!114 &1631584059
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -8010,6 +8188,59 @@ CanvasRenderer:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1671769826}
   m_CullTransparentMesh: 1
+--- !u!1 &1690687356
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1690687358}
+  - component: {fileID: 1690687357}
+  m_Layer: 0
+  m_Name: DigitalTwinTrajectoryComparison
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1690687357
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1690687356}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 5070b71bd46cfa44ca4fb74e32a736f1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  abstractMap: {fileID: 0}
+  poseBridge: {fileID: 0}
+  maxPoints: 800
+  minStepMeters: 0.4
+  lineWidth: 2.4
+  yOffset: 3
+  gpsColor: {r: 0.18, g: 0.55, b: 1, a: 1}
+  slamColor: {r: 1, g: 0.55, b: 0.12, a: 1}
+  showHud: 1
+--- !u!4 &1690687358
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1690687356}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &1769773880
 GameObject:
   m_ObjectHideFlags: 0
@@ -8849,6 +9080,27 @@ MonoBehaviour:
   clearRouteButton: {fileID: 869166847}
   exportJsonButton: {fileID: 764589797}
   generateSurveyButton: {fileID: 0}
+  waypointMapEditUiProfile: {fileID: 0}
+  waypointMapEditUiSettings:
+    stripLabel: Haritadan
+    hintText: Haritaya tiklayarak waypoint ekleyebilirsiniz.
+    stripHeight: 44
+    stripWidth: 260
+    spacingBelowControlPanel: 8
+    gapFromAltitudePanel: 12
+    fallbackBottomInset: 20
+    hintHeight: 30
+    hintSpacing: 6
+    stripLabelFontSize: 18
+    hintFontSize: 17
+    toggleWidth: 96
+    toggleHeight: 30
+    toggleCheckSize: 18
+    stripBackgroundColor: {r: 0.07, g: 0.09, b: 0.13, a: 0.92}
+    stripLabelColor: {r: 1, g: 1, b: 1, a: 1}
+    hintTextColor: {r: 1, g: 1, b: 1, a: 0.9}
+    toggleBackgroundColor: {r: 1, g: 1, b: 1, a: 0.22}
+    toggleCheckColor: {r: 0.25, g: 0.72, b: 1, a: 1}
 --- !u!114 &1841262516
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -9215,7 +9467,7 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 0, y: -29.999878}
+  m_AnchoredPosition: {x: 0, y: -29.999756}
   m_SizeDelta: {x: -40, y: -100}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &1903115744
@@ -9832,6 +10084,7 @@ MonoBehaviour:
   mainTelemetryUI: {fileID: 0}
   mirrorMainTelemetryPanelFormat: 1
   jsonTelemetryOverride: {fileID: 0}
+  twinPanelRoot: {fileID: 0}
   twinViewport: {fileID: 1903115743}
   droneView: {fileID: 599629035}
   routeView: {fileID: 1903115744}
@@ -9900,7 +10153,13 @@ MonoBehaviour:
   digitalTwinPanel: {fileID: 2016213188}
   map3DMode: {fileID: 0}
   mapViewRoot: {fileID: 1593283874}
-  hideMapWhenTwinOpen: 0
+  twinMode: 0
+  playSampleScenarioOnOpen: 0
+  sampleScenarioPlayer: {fileID: 0}
+  forceLoopScenarioOnOpen: 1
+  kmlPosePlayer: {fileID: 0}
+  startKmlPoseStreamOnTwinOpen: 0
+  stopKmlStreamWhenTwinCloses: 1
   digitalTwinButton: {fileID: 0}
   closeButton: {fileID: 0}
   buttonHighlightWhenOpen: {fileID: 0}
@@ -9921,6 +10180,7 @@ MonoBehaviour:
   textureWidth: 1024
   textureHeight: 768
   forcePerspectiveCamera: 1
+  cameraClearColor: {r: 0.08, g: 0.1, b: 0.14, a: 1}
   targetRawImage: {fileID: 0}
   followDistance: 22
   lockCameraHeightToDrone: 1
@@ -9943,10 +10203,9 @@ MonoBehaviour:
   abstractMap: {fileID: 1593283876}
   buildingsEnabler: {fileID: 1593283882}
   useSatelliteStreetsInTwin: 0
+  useSafeTerrain3D: 0
   terrainExaggeration: 1.8
   useBuildingsInTwin: 0
-  forceDisableBuildingsForStability: 1
-  reinforceFrames: 4
   restoreMapStateOnClose: 0
 --- !u!1 &2050757694
 GameObject:
@@ -10122,3 +10381,7 @@ SceneRoots:
   - {fileID: 872469371}
   - {fileID: 1631584064}
   - {fileID: 1802702318}
+  - {fileID: 150062207}
+  - {fileID: 819065052}
+  - {fileID: 1690687358}
+  - {fileID: 1073276680}

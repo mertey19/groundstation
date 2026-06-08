@@ -31,6 +31,8 @@ namespace GroundStation.DigitalTwin
         public string LastWaypointText { get; private set; } = "";
         public string LastMissionText { get; private set; } = "";
         public string LastMeshText { get; private set; } = "";
+        public TwinMeshStatus LastMeshStatus { get; private set; }
+        public bool HasMeshStatus { get; private set; }
         public string LastWarningText { get; private set; } = "";
         public string LastVehicleStatusText { get; private set; } = "";
         public string LastImageryStatusText { get; private set; } = "";
@@ -94,6 +96,8 @@ namespace GroundStation.DigitalTwin
             if (msg.meshLink != null)
             {
                 LastMeshText = BuildMeshText(msg.meshLink.hopCount, msg.meshLink.signalDbm, msg.meshLink.snrDb, msg.meshLink.latencyMs, msg.meshLink.packetLossPercent, msg.meshLink.linkQualityPercent, msg.meshLink.relayModeActive);
+                LastMeshStatus = msg.meshLink;
+                HasMeshStatus = true;
             }
 
             int obstacleCount = msg.obstacles != null ? msg.obstacles.Length : OperationalState.obstacleCount;
@@ -154,6 +158,7 @@ namespace GroundStation.DigitalTwin
             LastMissionText = LastMeshText = LastWarningText = "";
             LastVehicleStatusText = "";
             LastImageryStatusText = "";
+            HasMeshStatus = false;
             LastSourceId = "";
             LastVehicleType = "";
             LastMissionPhase = "";

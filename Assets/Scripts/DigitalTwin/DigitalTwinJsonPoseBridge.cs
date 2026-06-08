@@ -73,6 +73,11 @@ namespace GroundStation.DigitalTwin
         public DigitalTwinApplyStatus LastApplyStatus { get; private set; }
         public event System.Action<DigitalTwinApplyStatus> OnJsonApplied;
 
+        // PDF 3.4.4 "Golge Modu": arac GPS ile ucar, ozgun VI-SLAM arka planda calisir.
+        // Yorunge karsilastirma katmani bu iki olayi dinleyip GPS/SLAM izini ayri cizer.
+        public event System.Action<Vector2d> OnUavGpsPose;
+        public event System.Action<Vector2d> OnUavSlamPose;
+
         private void Awake()
         {
             if (abstractMap == null) abstractMap = FindObjectOfType<AbstractMap>();
@@ -187,11 +192,21 @@ namespace GroundStation.DigitalTwin
                     return false;
                 }
 
+                // Gorev gercegi (PDF 3.4.4): arac GPS ile ucar, VI-SLAM "golge modda" calisir.
+                // Drone GPS pozunu takip eder; GPS yoksa SLAM'e duser. Her iki konum da
+                // yorunge karsilastirma katmanina yayinlanir (GNSS-bagimsizlik kaniti).
                 bool poseApplied = false;
-                if (msg.slamPose != null)
-                    poseApplied = ApplySlamPose(msg.slamPose);
-                if (!poseApplied && msg.pose != null)
+                if (msg.pose != null)
+                {
                     poseApplied = ApplyVehiclePose(msg.pose);
+                    OnUavGpsPose?.Invoke(new Vector2d(msg.pose.latitude, msg.pose.longitude));
+                }
+                if (msg.slamPose != null)
+                {
+                    OnUavSlamPose?.Invoke(new Vector2d(msg.slamPose.latitude, msg.slamPose.longitude));
+                    if (!poseApplied)
+                        poseApplied = ApplySlamPose(msg.slamPose);
+                }
                 applied |= poseApplied;
             }
             else if (isRoverPayload && (msg.pose != null || msg.slamPose != null))

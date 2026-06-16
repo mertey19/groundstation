@@ -166,7 +166,7 @@ namespace GroundStation.Routes
             bool isSurvey = IsSurveyRoute(data);
             if (isSurvey && useQgcLikeStyleForSurvey)
             {
-                ConfigureRenderer(lineRenderer, surveyLineWidth, surveyLineColor);
+                ConfigureRenderer(lineRenderer, 2.6f, new Color(1f, 0.82f, 0.16f, 0.95f));  // QGC sari tarama cizgisi
                 if (glowLineRenderer != null)
                 {
                     if (disableGlowForSurvey)

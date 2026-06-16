@@ -88,7 +88,9 @@ namespace GroundStation.Routes
             if (data == null || data.waypoints == null)
                 return;
 
-            if (hideMarkersForSurveyRoute && IsSurveyRoute(data))
+            // Survey rotada (lawnmower) onlarca/yuzlerce waypoint olusur; dev kirmizi marker
+            // yigini cirkin gorunur. QGC gibi sadece tarama cizgisini birak, markerlari gizle.
+            if (IsSurveyRoute(data))
                 return;
 
             foreach (var wp in data.waypoints)

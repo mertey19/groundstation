@@ -42,6 +42,7 @@ namespace GroundStation.Routes
         private MeshFilter _fillMeshFilter;
         private MeshRenderer _fillMeshRenderer;
         private readonly List<Vector3> _polygonPoints = new List<Vector3>();
+        private readonly List<GameObject> _vertexMarkers = new List<GameObject>();
         private Text _debugText;
         private string _lastStatus = "Idle";
 
@@ -208,20 +209,27 @@ namespace GroundStation.Routes
             _preview.numCornerVertices = 2;
             _preview.numCapVertices = 0;
 
-            // Unlit renk: zayif aydinlatma/terrain ile gozulmesini azaltir.
-            var mat = new Material(Shader.Find("Unlit/Color"));
-            _preview.material = mat;
-
-            _preview.startColor = previewBorderColor;
+            // QGC tarzi: parlak cyan kenar, alpha destekli sprite shader + yuvarlak koseler.
+            var lineShader = Shader.Find("Sprites/Default");
+            if (lineShader == null) lineShader = Shader.Find("Unlit/Color");
+            _preview.material = new Material(lineShader);
+            _preview.numCapVertices = 4;
+            _preview.numCornerVertices = 4;
+            _preview.startColor = new Color(0.25f, 0.85f, 1f, 1f);
             _preview.endColor = _preview.startColor;
 
             var fillGo = new GameObject("SurveyAreaFill");
             fillGo.transform.SetParent(transform, false);
             _fillMeshFilter = fillGo.AddComponent<MeshFilter>();
             _fillMeshRenderer = fillGo.AddComponent<MeshRenderer>();
-            var fillMat = new Material(Shader.Find("Unlit/Color"));
-            fillMat.color = previewFillColor;
+            // Sprites/Default: Unlit/Color'in aksine ALPHA destekler -> yari saydam dolgu gorunur.
+            var fillShader = Shader.Find("Sprites/Default");
+            if (fillShader == null) fillShader = Shader.Find("Unlit/Color");
+            var fillMat = new Material(fillShader);
+            fillMat.color = Color.white;   // gercek renk mesh vertex renginden gelir (Sprites/Default tint)
             _fillMeshRenderer.material = fillMat;
+            _fillMeshRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            _fillMeshRenderer.receiveShadows = false;
         }
 
         private void UpdatePreviewWidthByCamera()
@@ -230,7 +238,9 @@ namespace GroundStation.Routes
             float width;
             if (forceFixedPreviewWidth)
             {
-                width = Mathf.Max(0.01f, fixedPreviewLineWidth);
+                // Kameraya gore ince kenar: yakin zoomda ince, uzakta gorunur kalir.
+                float camY = mapCamera != null ? mapCamera.transform.position.y : 300f;
+                width = Mathf.Clamp(camY * 0.006f, 1.0f, 5f);
             }
             else
             {
@@ -324,6 +334,7 @@ namespace GroundStation.Routes
             _preview.SetPosition(3, p3);
 
             DrawFillFromVertices(new List<Vector3> { p0, p1, p2, p3 });
+            EnsureVertexMarkers(new List<Vector3> { p0, p1, p2, p3 });
         }
 
         private void DrawPreviewPolygon(List<Vector3> points)
@@ -350,8 +361,10 @@ namespace GroundStation.Routes
             }
             else
             {
-                ClearFill();
+                if (_fillMeshFilter != null) _fillMeshFilter.sharedMesh = null;
+                if (_fillMeshRenderer != null) _fillMeshRenderer.enabled = false;
             }
+            EnsureVertexMarkers(points);
         }
 
         private void DrawFillFromVertices(List<Vector3> verts)
@@ -364,9 +377,50 @@ namespace GroundStation.Routes
             var mesh = new Mesh();
             mesh.SetVertices(verts);
             mesh.SetTriangles(tris, 0);
+            var cols = new Color[verts.Count];
+            var fc = new Color(0.20f, 0.58f, 1f, 0.30f);   // yari saydam mavi dolgu
+            for (int ci = 0; ci < cols.Length; ci++) cols[ci] = fc;
+            mesh.SetColors(cols);
             mesh.RecalculateNormals();
             _fillMeshFilter.sharedMesh = mesh;
             if (_fillMeshRenderer != null) _fillMeshRenderer.enabled = true;
+        }
+
+        // QGC tarzi kose tutamaclari (vertex handle): her kosede parlak cyan kucuk kure.
+        private void EnsureVertexMarkers(List<Vector3> pts)
+        {
+            int n = pts != null ? pts.Count : 0;
+            while (_vertexMarkers.Count < n)
+            {
+                var m = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                m.name = "SurveyVertex";
+                var col = m.GetComponent<Collider>(); if (col != null) Destroy(col);
+                var mr = m.GetComponent<MeshRenderer>();
+                if (mr != null)
+                {
+                    var sh = Shader.Find("Sprites/Default");
+                    if (sh == null) sh = Shader.Find("Unlit/Color");
+                    mr.material = new Material(sh) { color = new Color(0.35f, 0.92f, 1f, 1f) };
+                    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    mr.receiveShadows = false;
+                }
+                m.transform.SetParent(transform, false);
+                _vertexMarkers.Add(m);
+            }
+
+            float camY = mapCamera != null ? mapCamera.transform.position.y : 300f;
+            float sz = Mathf.Clamp(camY * 0.011f, 1.4f, 8f);   // kameraya gore kucuk kose tutamaci
+            for (int i = 0; i < _vertexMarkers.Count; i++)
+            {
+                if (_vertexMarkers[i] == null) continue;
+                bool on = i < n;
+                _vertexMarkers[i].SetActive(on);
+                if (on)
+                {
+                    _vertexMarkers[i].transform.position = new Vector3(pts[i].x, pts[i].y + previewLiftY, pts[i].z);
+                    _vertexMarkers[i].transform.localScale = Vector3.one * sz;
+                }
+            }
         }
 
         private void ClearFill()
@@ -375,6 +429,8 @@ namespace GroundStation.Routes
                 _fillMeshFilter.sharedMesh = null;
             if (_fillMeshRenderer != null)
                 _fillMeshRenderer.enabled = false;
+            for (int i = 0; i < _vertexMarkers.Count; i++)
+                if (_vertexMarkers[i] != null) _vertexMarkers[i].SetActive(false);
         }
 
         // Ear clipping triangulation on XZ plane.

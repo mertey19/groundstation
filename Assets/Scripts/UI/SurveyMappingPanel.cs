@@ -321,7 +321,9 @@ namespace GroundStation.UI
         {
             var panelImage = GetComponent<Image>();
             if (panelImage == null) panelImage = gameObject.AddComponent<Image>();
-            panelImage.color = panelColor;
+            panelImage.color = new Color(0.06f, 0.08f, 0.12f, 0.95f);   // QGC koyu cam
+            panelImage.sprite = RoundedUiSprite();
+            panelImage.type = Image.Type.Sliced;
 
             var rt = transform as RectTransform;
             if (rt != null)
@@ -676,6 +678,14 @@ namespace GroundStation.UI
             le.preferredHeight = inputHeight;
             le.flexibleHeight = 0f;
 
+            var inImg = input.GetComponent<Image>();
+            if (inImg != null)
+            {
+                inImg.color = new Color(0.10f, 0.13f, 0.18f, 0.96f);
+                inImg.sprite = RoundedUiSprite();
+                inImg.type = Image.Type.Sliced;
+            }
+
             input.contentType = InputField.ContentType.DecimalNumber;
             if (input.textComponent != null)
             {
@@ -684,6 +694,7 @@ namespace GroundStation.UI
                 input.textComponent.fontSize = textSize;
                 input.textComponent.fontStyle = FontStyle.Bold;
                 input.textComponent.alignment = TextAnchor.MiddleCenter;
+                input.textComponent.color = new Color(0.94f, 0.97f, 1f, 1f);
             }
             if (input.placeholder is Text ph)
             {
@@ -705,7 +716,12 @@ namespace GroundStation.UI
             le.flexibleHeight = 0f;
 
             var img = button.GetComponent<Image>();
-            if (img != null) img.color = buttonColor;
+            if (img != null)
+            {
+                img.color = new Color(0.13f, 0.17f, 0.24f, 0.96f);   // QGC koyu buton (UiButtonThemer ile uyumlu)
+                img.sprite = RoundedUiSprite();
+                img.type = Image.Type.Sliced;
+            }
 
             var txt = button.GetComponentInChildren<Text>(true);
             if (txt != null)
@@ -715,7 +731,7 @@ namespace GroundStation.UI
                 txt.text = label;
                 txt.fontSize = buttonTextSize;
                 txt.fontStyle = FontStyle.Bold;
-                txt.color = buttonTextColor;
+                txt.color = new Color(0.94f, 0.97f, 1f, 1f);
                 txt.alignment = TextAnchor.MiddleCenter;
                 txt.horizontalOverflow = HorizontalWrapMode.Overflow;
                 txt.verticalOverflow = VerticalWrapMode.Overflow;
@@ -837,6 +853,27 @@ namespace GroundStation.UI
             }
 
             return fallbackUIFont;
+        }
+
+        // QGroundControl tarzi yuvarlatilmis 9-slice sprite (panel/buton/input arka plani icin).
+        private static Sprite _roundedUiSprite;
+        private static Sprite RoundedUiSprite()
+        {
+            if (_roundedUiSprite != null) return _roundedUiSprite;
+            int s = 48, r = 10;
+            var tex = new Texture2D(s, s, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            for (int y = 0; y < s; y++)
+                for (int x = 0; x < s; x++)
+                {
+                    float cx = Mathf.Clamp(x, r, s - 1 - r);
+                    float cy = Mathf.Clamp(y, r, s - 1 - r);
+                    float d = Mathf.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+                    tex.SetPixel(x, y, new Color(1f, 1f, 1f, Mathf.Clamp01(r - d + 0.5f)));
+                }
+            tex.Apply();
+            tex.hideFlags = HideFlags.HideAndDontSave;
+            _roundedUiSprite = Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, new Vector4(r, r, r, r));
+            return _roundedUiSprite;
         }
 
         private void EnsurePanelToggleUi()

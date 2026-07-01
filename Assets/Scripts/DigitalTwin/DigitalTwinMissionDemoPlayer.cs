@@ -335,7 +335,7 @@ namespace GroundStation.DigitalTwin
             if (!showHud) return;
             float w = 344f, h = 78f;
             Vector2 def = new Vector2((Screen.width - w) * 0.5f, Screen.height - h - 60f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h);
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_demo");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;

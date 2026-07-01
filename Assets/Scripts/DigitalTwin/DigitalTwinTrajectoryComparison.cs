@@ -180,9 +180,9 @@ namespace GroundStation.DigitalTwin
         {
             if (!showHud || (!_hasGps && !_hasSlam)) return;
             float w = 282f, h = 116f;
-            // Varsayilan: sag ust, zoom (+/-) butonlarinin ALTINDA. Baslik seridinden surukle.
-            Vector2 def = new Vector2(Screen.width - w - 16f, 122f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h);
+            // Varsayilan: sol ust, telemetri panelinin altinda. Baslik seridinden surukle.
+            Vector2 def = new Vector2(16f, 172f);
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_traj");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;

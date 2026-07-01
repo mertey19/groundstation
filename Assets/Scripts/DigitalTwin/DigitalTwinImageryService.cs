@@ -24,6 +24,10 @@ namespace GroundStation.DigitalTwin
         private VideoPlayer _videoPlayer;
         private RenderTexture _videoRenderTexture;
 
+        // Canli kamera akisi paneli icin son goruntu texture'ina erisim.
+        public Texture CurrentTexture => _videoRenderTexture != null ? (Texture)_videoRenderTexture : _loadedTexture;
+        public bool HasActiveImagery => _raw != null && _raw.enabled && CurrentTexture != null;
+
         private void Awake()
         {
             if (remoteState == null)

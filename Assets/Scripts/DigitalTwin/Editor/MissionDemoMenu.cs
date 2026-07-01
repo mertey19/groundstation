@@ -36,7 +36,9 @@ public static class MissionDemoMenu
         EnsureSingleton<DigitalTwinMeshTopologyPanel>("DigitalTwinMeshTopologyPanel");
         EnsureSingleton<DigitalTwinMissionDemoPlayer>("DigitalTwinMissionDemoPlayer");
         EnsureSingleton<UiButtonThemer>("UiButtonThemer");
-        Debug.Log("[Simurgh] Tum YKI gelistirmeleri hazir (yorunge + mesh + demo + buton temasi). Play -> Oynat.");
+        EnsureSingleton<DigitalTwinCameraFeedPanel>("DigitalTwinCameraFeedPanel");
+        EnsureSingleton<DigitalTwinFlightSafetyPanel>("DigitalTwinFlightSafetyPanel");
+        Debug.Log("[Simurgh] Tum YKI gelistirmeleri hazir (yorunge + mesh + demo + kamera + fail-safe + buton temasi). Play -> Oynat.");
     }
 
     private static void EnsureSingleton<T>(string objectName) where T : Component

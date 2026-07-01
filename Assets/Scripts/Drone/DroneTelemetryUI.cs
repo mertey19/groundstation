@@ -55,6 +55,8 @@ namespace GroundStation.Drone
 
             if (droneTransform == null && drone != null)
                 droneTransform = drone.transform;
+
+            StyleTelemetryPanel();
         }
 
         private void Update()
@@ -124,6 +126,59 @@ namespace GroundStation.Drone
             }
             _lastFpsText = string.Format("FPS: {0:F0}", _fpsSmoothed > 0 ? _fpsSmoothed : (1f / Time.unscaledDeltaTime));
             fpsText.text = _lastFpsText;
+        }
+
+        // Sol ust telemetri panelini koyu "cam" temaya ceker: yuvarlatilmis arka plan + acik yazi.
+        private bool _styled;
+        private static Sprite _roundedSprite;
+
+        private void StyleTelemetryPanel()
+        {
+            if (_styled) return;
+            _styled = true;
+
+            Text[] all = { altitudeText, speedText, modeText, waypointIndexText, flightDurationText, fpsText };
+            for (int i = 0; i < all.Length; i++)
+            {
+                if (all[i] == null) continue;
+                all[i].color = new Color(0.90f, 0.95f, 1f, 1f);
+                all[i].fontStyle = FontStyle.Bold;
+            }
+
+            Transform p = altitudeText != null ? altitudeText.transform.parent : transform;
+            Image bg = null;
+            int guard = 0;
+            while (p != null && bg == null && guard < 6)
+            {
+                bg = p.GetComponent<Image>();
+                if (bg == null) p = p.parent;
+                guard++;
+            }
+            if (bg != null)
+            {
+                bg.color = new Color(0.05f, 0.07f, 0.11f, 0.92f);
+                bg.sprite = RoundedSprite();
+                bg.type = Image.Type.Sliced;
+            }
+        }
+
+        private static Sprite RoundedSprite()
+        {
+            if (_roundedSprite != null) return _roundedSprite;
+            int s = 48, r = 12;
+            var tex = new Texture2D(s, s, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };
+            for (int y = 0; y < s; y++)
+                for (int x = 0; x < s; x++)
+                {
+                    float cx = Mathf.Clamp(x, r, s - 1 - r);
+                    float cy = Mathf.Clamp(y, r, s - 1 - r);
+                    float d = Mathf.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+                    tex.SetPixel(x, y, new Color(1f, 1f, 1f, Mathf.Clamp01(r - d + 0.5f)));
+                }
+            tex.Apply();
+            tex.hideFlags = HideFlags.HideAndDontSave;
+            _roundedSprite = Sprite.Create(tex, new Rect(0, 0, s, s), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, new Vector4(r, r, r, r));
+            return _roundedSprite;
         }
     }
 }

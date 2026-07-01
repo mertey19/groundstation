@@ -61,15 +61,31 @@ namespace GroundStation.DigitalTwin
         /// Surukle-birak panel konumu: panelin ust serit (baslik) alanindan tutulup tasinir.
         /// pos.x &lt; -9000 ise ilk cizimde def kullanilir. Donen Rect ile panel cizilir.
         /// </summary>
-        public static Rect Drag(ref Vector2 pos, ref bool dragging, Vector2 def, float w, float h)
+        public static Rect Drag(ref Vector2 pos, ref bool dragging, Vector2 def, float w, float h, string prefsKey = null)
         {
-            if (pos.x < -9000f) pos = def;
+            if (pos.x < -9000f)
+            {
+                // Once kayitli konum (kalici), yoksa varsayilan.
+                pos = def;
+                if (!string.IsNullOrEmpty(prefsKey) && PlayerPrefs.HasKey(prefsKey + "_x"))
+                    pos = new Vector2(PlayerPrefs.GetFloat(prefsKey + "_x"), PlayerPrefs.GetFloat(prefsKey + "_y"));
+            }
             var e = Event.current;
             var titleBar = new Rect(pos.x, pos.y, w, 28f);
             if (e != null)
             {
                 if (e.type == EventType.MouseDown && e.button == 0 && titleBar.Contains(e.mousePosition)) { dragging = true; e.Use(); }
-                else if (e.type == EventType.MouseUp && e.button == 0) dragging = false;
+                else if (e.type == EventType.MouseUp && e.button == 0)
+                {
+                    if (dragging && !string.IsNullOrEmpty(prefsKey))
+                    {
+                        // Surukleme bitti -> konumu kalici kaydet.
+                        PlayerPrefs.SetFloat(prefsKey + "_x", pos.x);
+                        PlayerPrefs.SetFloat(prefsKey + "_y", pos.y);
+                        PlayerPrefs.Save();
+                    }
+                    dragging = false;
+                }
                 else if (dragging && e.type == EventType.MouseDrag) { pos += e.delta; e.Use(); }
             }
             pos.x = Mathf.Clamp(pos.x, 0f, Mathf.Max(0f, Screen.width - w));

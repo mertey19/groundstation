@@ -38,10 +38,10 @@ namespace GroundStation.DigitalTwin
             var mesh = remoteState.HasMeshStatus ? remoteState.LastMeshStatus : null;
             if (mesh == null && !showWhenNoData) return;
 
-            float w = 322f, h = 224f;
-            // Varsayilan: sol tarafta, biraz yukarida. Baslik seridinden surukle.
-            Vector2 def = new Vector2(16f, Screen.height - h - 132f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h);
+            float w = 286f, h = 224f;
+            // Varsayilan: sol alt. Baslik seridinden surukle.
+            Vector2 def = new Vector2(16f, Screen.height - h - 116f);
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_mesh");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;

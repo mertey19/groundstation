@@ -17,27 +17,83 @@ namespace GroundStation.UI
     {
         [SerializeField] private bool hideAltitudePanel = true;
         [SerializeField] private bool compactWaypointStrip = true;
+        [Header("Sag ust duzeni")]
+        [Tooltip("Hiz/Yukseklik butonlarini sag ust koseye tasi.")]
+        [SerializeField] private bool moveSpeedPanelTopRight = true;
+        [SerializeField] private Vector2 speedPanelTopRightOffset = new Vector2(-14f, -14f);
+        [Tooltip("Zoom +/- butonlarini gizle (tekerlek ile zoom calismaya devam eder).")]
+        [SerializeField] private bool hideZoomButtons = true;
+        [Tooltip("Sag HUD kolonu (Ucus Guvenligi...) hiz panelinin altindan baslasin (sanal birim).")]
+        [SerializeField] private float rightColumnStartBelowSpeedPanel = 300f;
         [Tooltip("WP dugmesinin sol kenardan uzakligi (sanal 1080p birimi).")]
         [SerializeField] private float buttonX = 340f;
         [SerializeField] private float buttonBottomMargin = 14f;
         [SerializeField] private Vector2 buttonSize = new Vector2(118f, 28f);
 
-        private bool _altDone, _stripDone;
+        private bool _altDone, _stripDone, _speedDone, _zoomDone;
         private float _nextTryAt;
         private Toggle _wpToggle;
         private GUIStyle _hintStyle;
 
         private void Update()
         {
-            if ((_altDone || !hideAltitudePanel) && (_stripDone || !compactWaypointStrip))
+            if ((_altDone || !hideAltitudePanel) && (_stripDone || !compactWaypointStrip) &&
+                (_speedDone || !moveSpeedPanelTopRight) && (_zoomDone || !hideZoomButtons))
                 return;   // arama bitti; OnGUI dugmesi icin bilesen acik kalir
             if (Time.unscaledTime < _nextTryAt) return;
-            _nextTryAt = Time.unscaledTime + 0.5f;   // strip runtime'da sonradan kurulur; tekrar dene
+            _nextTryAt = Time.unscaledTime + 0.5f;   // bazi UI'lar runtime'da sonradan kurulur; tekrar dene
 
             if (hideAltitudePanel && !_altDone)
                 TryHideAltitudePanel();
             if (compactWaypointStrip && !_stripDone)
                 TryTakeOverStrip();
+            if (moveSpeedPanelTopRight && !_speedDone)
+                TryMoveSpeedPanel();
+            if (hideZoomButtons && !_zoomDone)
+                TryHideZoomButtons();
+        }
+
+        private void TryMoveSpeedPanel()
+        {
+            var sp = FindObjectOfType<DroneSpeedAltitudePanel>();
+            RectTransform rt = sp != null ? sp.transform as RectTransform : null;
+            if (rt == null)
+            {
+                // Yedek: adi hiz/speed iceren canvas paneli.
+                var canvas = FindObjectOfType<Canvas>();
+                if (canvas == null) return;
+                foreach (Transform child in canvas.transform)
+                {
+                    string n = child.name.ToLowerInvariant();
+                    if ((n.Contains("speed") || n.Contains("hiz")) && child is RectTransform crt) { rt = crt; break; }
+                }
+                if (rt == null) return;
+            }
+
+            rt.anchorMin = rt.anchorMax = new Vector2(1f, 1f);
+            rt.pivot = new Vector2(1f, 1f);
+            rt.anchoredPosition = speedPanelTopRightOffset;
+
+            // Sag HUD kolonu (Ucus Guvenligi, Kamera, Hedefler) panelin altindan baslasin.
+            GroundStation.DigitalTwin.TwinHudTheme.RightColumnStartY = rightColumnStartBelowSpeedPanel;
+            _speedDone = true;
+        }
+
+        private void TryHideZoomButtons()
+        {
+            var zp = FindObjectOfType<MapZoomPanel>();
+            if (zp == null) return;
+
+            // Butonlar MapZoomPanel'de serilestirilmis; reflection ile bulup gizle.
+            var t = zp.GetType();
+            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+            foreach (var fieldName in new[] { "zoomInButton", "zoomOutButton" })
+            {
+                var f = t.GetField(fieldName, flags);
+                var b = f != null ? f.GetValue(zp) as Button : null;
+                if (b != null) b.gameObject.SetActive(false);
+            }
+            _zoomDone = true;
         }
 
         private void TryHideAltitudePanel()

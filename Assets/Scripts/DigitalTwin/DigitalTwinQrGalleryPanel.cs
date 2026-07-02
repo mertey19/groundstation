@@ -73,9 +73,7 @@ namespace GroundStation.DigitalTwin
             float w = 16f * 2f + cols * thumbW + (cols - 1) * pad;
             float h = 58f + rows * (thumbH + 18f + pad);
 
-            // Sol sutun #3 (mesh panelinin altinda).
-            Vector2 def = new Vector2(16f, 669f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_gallery_v3");
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_gallery_v4");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;

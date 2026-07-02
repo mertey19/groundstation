@@ -295,10 +295,9 @@ namespace GroundStation.DigitalTwin
         {
             if (!showHud || (!_hasGps && !_hasSlam)) return;
             float s = TwinHudTheme.BeginScaledHud();
-            float w = 282f, h = 190f;
-            // Sol sutun #1 (telemetrinin altinda). Anahtar v2: eski cakisan kayitli konumlari sifirlar.
-            Vector2 def = new Vector2(16f, 195f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_traj_v3");
+            float w = 282f, h = 186f;
+            // Sol kolon istifi: alt alta otomatik dizilir, cakismaz.
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_traj_v4");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;
@@ -352,7 +351,7 @@ namespace GroundStation.DigitalTwin
             if (GUI.Button(new Rect(x + 104f, y, 78f, 20f), "Temizle", TwinHudTheme.Button))
                 ClearTrajectories();
             if (!string.IsNullOrEmpty(_savedPath) && Time.unscaledTime < _savedPathUntil)
-                GUI.Label(new Rect(x, y + 22f, w - 32f, 16f), "Kaydedildi: " + System.IO.Path.GetFileName(_savedPath), TwinHudTheme.Small);
+                GUI.Label(new Rect(x + 190f, y + 2f, w - 218f, 16f), "kaydedildi ✓", TwinHudTheme.Small);
 
             TwinHudTheme.EndScaledHud();
         }

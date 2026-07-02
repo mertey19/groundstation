@@ -29,8 +29,8 @@ namespace GroundStation.DigitalTwin
         // Paneller 1080p "sanal" koordinatlarda cizilir; GUI.matrix hem cizimi hem
         // IMGUI girdisini olcekler. Panel konumlamada Screen.width yerine ScreenW kullan.
 
-        /// <summary>Genel HUD kompaktligi: 1 = tam boy, 0.85 = %15 kucuk paneller (yazilar dahil).</summary>
-        public static float HudCompactScale = 0.85f;
+        /// <summary>Genel HUD kompaktligi: 1 = tam boy, 0.78 = %22 kucuk paneller (yazilar dahil).</summary>
+        public static float HudCompactScale = 0.78f;
 
         public static float UiScale => Mathf.Max(1f, Screen.height / 1080f) * Mathf.Clamp(HudCompactScale, 0.6f, 1.2f);
         public static float ScreenW => Screen.width / UiScale;
@@ -84,31 +84,94 @@ namespace GroundStation.DigitalTwin
             GUI.color = prev;
         }
 
+        // --- Otomatik kolon istifi ---
+        // Paneller sabit Y yerine kolon icinde GERCEK yuksekliklerine gore alt alta dizilir:
+        // biri gizlenince bosluk kapanir, icerik uzasa da CAKISMA OLMAZ. Kullanici bir paneli
+        // surukleyince o panel istiften cikar (serbest konum, PlayerPrefs ile kalici).
+        public enum HudColumn { Free, Left, Right }
+
+        public static float LeftColumnStartY = 195f;    // sol ust telemetrinin alti
+        public static float RightColumnStartY = 130f;   // zoom +/- butonlarinin alti
+        private const float StackGap = 8f;
+
+        private static int _stackFrame = -1;
+        private static EventType _stackEvt = EventType.Ignore;
+        private static float _stackLeftY, _stackRightY;
+
+        private static void EnsureStackFrame()
+        {
+            var e = Event.current;
+            var t = e != null ? e.type : EventType.Ignore;
+            if (Time.frameCount != _stackFrame || t != _stackEvt)
+            {
+                _stackFrame = Time.frameCount;
+                _stackEvt = t;
+                _stackLeftY = LeftColumnStartY;
+                _stackRightY = RightColumnStartY;
+            }
+        }
+
+        private static Vector2 StackNext(HudColumn column, float w, float h)
+        {
+            EnsureStackFrame();
+            if (column == HudColumn.Right)
+            {
+                var p = new Vector2(ScreenW - w - 16f, _stackRightY);
+                _stackRightY += h + StackGap;
+                return p;
+            }
+            var l = new Vector2(16f, _stackLeftY);
+            _stackLeftY += h + StackGap;
+            return l;
+        }
+
+        /// <summary>Kolon istifine katilan suruklenebilir panel (onerilen).</summary>
+        public static Rect Drag(ref Vector2 pos, ref bool dragging, HudColumn column, float w, float h, string prefsKey = null)
+        {
+            if (pos.x < -9000f && !string.IsNullOrEmpty(prefsKey) && PlayerPrefs.HasKey(prefsKey + "_x"))
+                pos = new Vector2(PlayerPrefs.GetFloat(prefsKey + "_x"), PlayerPrefs.GetFloat(prefsKey + "_y"));
+
+            bool userPlaced = pos.x > -9000f;
+            // Tasinmamis panel istifi takip eder (ve istif slotunu yalnizca o zaman tuketir).
+            Vector2 basePos = userPlaced ? pos : StackNextIf(column, w, h);
+            return DragCore(ref pos, ref dragging, basePos, userPlaced, w, h, prefsKey);
+        }
+
+        private static Vector2 StackNextIf(HudColumn column, float w, float h)
+        {
+            if (column == HudColumn.Free) return new Vector2(16f, 16f);
+            return StackNext(column, w, h);
+        }
+
         /// <summary>
-        /// Surukle-birak panel konumu: panelin ust serit (baslik) alanindan tutulup tasinir.
-        /// pos.x &lt; -9000 ise ilk cizimde def kullanilir. Donen Rect ile panel cizilir.
+        /// Sabit varsayilan konumlu suruklenebilir panel (demo/ozet gibi ortalananlar icin).
         /// </summary>
         public static Rect Drag(ref Vector2 pos, ref bool dragging, Vector2 def, float w, float h, string prefsKey = null)
         {
-            if (pos.x < -9000f)
-            {
-                // Once kayitli konum (kalici), yoksa varsayilan.
-                pos = def;
-                if (!string.IsNullOrEmpty(prefsKey) && PlayerPrefs.HasKey(prefsKey + "_x"))
-                    pos = new Vector2(PlayerPrefs.GetFloat(prefsKey + "_x"), PlayerPrefs.GetFloat(prefsKey + "_y"));
-            }
+            if (pos.x < -9000f && !string.IsNullOrEmpty(prefsKey) && PlayerPrefs.HasKey(prefsKey + "_x"))
+                pos = new Vector2(PlayerPrefs.GetFloat(prefsKey + "_x"), PlayerPrefs.GetFloat(prefsKey + "_y"));
+            bool userPlaced = pos.x > -9000f;
+            Vector2 basePos = userPlaced ? pos : def;
+            return DragCore(ref pos, ref dragging, basePos, userPlaced, w, h, prefsKey);
+        }
+
+        private static Rect DragCore(ref Vector2 pos, ref bool dragging, Vector2 basePos, bool userPlaced, float w, float h, string prefsKey)
+        {
             var e = Event.current;
-            var titleBar = new Rect(pos.x, pos.y, w, 28f);
+            var titleBar = new Rect(basePos.x, basePos.y, w, 28f);
             if (e != null)
             {
-                if (e.type == EventType.MouseDown && e.button == 0 && titleBar.Contains(e.mousePosition)) { dragging = true; e.Use(); }
+                if (e.type == EventType.MouseDown && e.button == 0 && titleBar.Contains(e.mousePosition))
+                {
+                    dragging = true;
+                    pos = basePos;   // istif/varsayilan konumu kilitle, buradan surukle
+                    e.Use();
+                }
                 else if (e.rawType == EventType.MouseUp && e.button == 0)
                 {
-                    // rawType: fare pencere DISINDA birakilsa da MouseUp yakalanir
-                    // (dragging'in asili kalmasini onler).
+                    // rawType: fare pencere DISINDA birakilsa da MouseUp yakalanir.
                     if (dragging && !string.IsNullOrEmpty(prefsKey))
                     {
-                        // Surukleme bitti -> konumu kalici kaydet (PlayerPrefs cikista flush edilir).
                         PlayerPrefs.SetFloat(prefsKey + "_x", pos.x);
                         PlayerPrefs.SetFloat(prefsKey + "_y", pos.y);
                     }
@@ -116,9 +179,19 @@ namespace GroundStation.DigitalTwin
                 }
                 else if (dragging && e.type == EventType.MouseDrag) { pos += e.delta; e.Use(); }
             }
-            pos.x = Mathf.Clamp(pos.x, 0f, Mathf.Max(0f, ScreenW - w));
-            pos.y = Mathf.Clamp(pos.y, 0f, Mathf.Max(0f, ScreenH - h));
-            return new Rect(pos.x, pos.y, w, h);
+
+            if (dragging || userPlaced)
+            {
+                pos.x = Mathf.Clamp(pos.x, 0f, Mathf.Max(0f, ScreenW - w));
+                pos.y = Mathf.Clamp(pos.y, 0f, Mathf.Max(0f, ScreenH - h));
+                basePos = pos;
+            }
+            else
+            {
+                basePos.x = Mathf.Clamp(basePos.x, 0f, Mathf.Max(0f, ScreenW - w));
+                basePos.y = Mathf.Clamp(basePos.y, 0f, Mathf.Max(0f, ScreenH - h));
+            }
+            return new Rect(basePos.x, basePos.y, w, h);
         }
 
         public static void Fill(Rect r, Color c, float radius = 4f)

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
@@ -29,6 +30,12 @@ namespace GroundStation.DigitalTwin
 
         private Sprite _rounded;
         private float _nextReapply;
+        // Bir kez temalanan butonlar atlanir: periyodik taramada GetComponentsInChildren
+        // + reflection maliyeti yalnizca YENI butonlara oder (GC spike onleme).
+        private readonly HashSet<int> _themedIds = new HashSet<int>();
+        private static System.Type _tmpTextType;
+        private static System.Reflection.PropertyInfo _tmpColorProp;
+        private static bool _tmpResolved;
 
         private void Start()
         {
@@ -55,6 +62,7 @@ namespace GroundStation.DigitalTwin
         private void Theme(Button b)
         {
             if (b == null) return;
+            if (!_themedIds.Add(b.GetInstanceID())) return;   // zaten temalandi
 
             var img = b.targetGraphic as Image;
             if (img == null) img = b.GetComponent<Image>();
@@ -85,17 +93,28 @@ namespace GroundStation.DigitalTwin
             }
 
             // TextMeshPro (varsa) reflection ile renklendir — TMP derleme bagimliligi olmadan.
-            var children = b.GetComponentsInChildren<Component>(true);
-            for (int i = 0; i < children.Length; i++)
+            // Tip ve property BIR KEZ cozulur (buton basina tip taramasi/boxing yok).
+            if (!_tmpResolved)
             {
-                var c = children[i];
-                if (c == null) continue;
-                string tn = c.GetType().Name;
-                if (tn == "TextMeshProUGUI" || tn == "TMP_Text")
-                {
-                    var p = c.GetType().GetProperty("color", BindingFlags.Instance | BindingFlags.Public);
-                    if (p != null && p.CanWrite) p.SetValue(c, textColor);
-                }
+                _tmpResolved = true;
+                _tmpTextType = System.Type.GetType("TMPro.TextMeshProUGUI, Unity.TextMeshPro");
+                if (_tmpTextType != null)
+                    _tmpColorProp = _tmpTextType.GetProperty("color", BindingFlags.Instance | BindingFlags.Public);
+            }
+            if (_tmpTextType != null && _tmpColorProp != null)
+            {
+                var tmp = b.GetComponentInChildren(_tmpTextType, true);
+                if (tmp != null && _tmpColorProp.CanWrite)
+                    _tmpColorProp.SetValue(tmp, textColor);
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (_rounded != null)
+            {
+                if (_rounded.texture != null) Destroy(_rounded.texture);
+                Destroy(_rounded);
             }
         }
 

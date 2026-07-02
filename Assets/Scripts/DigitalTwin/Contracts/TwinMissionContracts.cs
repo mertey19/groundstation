@@ -58,6 +58,8 @@ namespace GroundStation.DigitalTwin
         public float longitude;
         public bool reached;
         public float confidence;
+        /// <summary>Rover'in okudugu karekodun COZULMUS icerigi (hakem kaniti; PDF gorev senaryosu).</summary>
+        public string decodedContent = "";
     }
 
     [Serializable]

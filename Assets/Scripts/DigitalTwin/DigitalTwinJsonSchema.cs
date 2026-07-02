@@ -44,7 +44,9 @@ namespace GroundStation.DigitalTwin
     ""signalDbm"": -56,
     ""snrDb"": 22,
     ""latencyMs"": 43,
-    ""packetLossPercent"": 0.8
+    ""packetLossPercent"": 0.8,
+    ""batteryPercent"": 87.5,
+    ""batteryVoltage"": 24.6
   },
   ""meshLink"": {
     ""hopCount"": 1,
@@ -72,7 +74,7 @@ namespace GroundStation.DigitalTwin
     { ""id"": ""obs-17"", ""operation"": ""upsert"", ""kind"": ""moving"", ""latitude"": 37.7850, ""longitude"": -122.4031, ""radiusM"": 4.0, ""severity"": 0.7 }
   ],
   ""targets"": [
-    { ""id"": ""qr-3"", ""operation"": ""upsert"", ""kind"": ""qrcode"", ""latitude"": 37.7853, ""longitude"": -122.4029, ""reached"": false, ""confidence"": 0.89 }
+    { ""id"": ""qr-3"", ""operation"": ""upsert"", ""kind"": ""qrcode"", ""latitude"": 37.7853, ""longitude"": -122.4029, ""reached"": false, ""confidence"": 0.89, ""decodedContent"": ""KESIF-NOKTA-3"" }
   ],
   ""voxelCells"": [
     { ""id"": ""vox-101"", ""operation"": ""upsert"", ""latitude"": 37.78512, ""longitude"": -122.40322, ""altitudeM"": 8.0, ""sizeM"": 1.2, ""occupancy"": 0.92 }
@@ -162,6 +164,13 @@ namespace GroundStation.DigitalTwin
         public string streamingAssetsVideoFile = "";
         /// <summary>video icin: bos veya "loop" tekrar; "once" tek sefer.</summary>
         public string videoLoopMode = "";
+        /// <summary>
+        /// AG UZERINDEN goruntu iletimi: kucuk JPEG/PNG karesinin Base64 icerigi
+        /// (rover karekod fotografi ~50-100KB). Doluysa dosya yollari yerine bu kullanilir.
+        /// </summary>
+        public string imageBase64 = "";
+        /// <summary>Fotografin iliskili oldugu hedef (karekod) id'si — galeri eslestirmesi.</summary>
+        public string targetId = "";
     }
 
     [Serializable]
@@ -187,6 +196,10 @@ namespace GroundStation.DigitalTwin
         public float snrDb;
         public float latencyMs;
         public float packetLossPercent;
+        // Fail-safe girdisi (PDF 3.3): batarya. -1 = veri gelmedi (alan JSON'da yoksa
+        // JsonUtility alan baslangic degerini korur, boylece "yok" ile "0" ayirt edilir).
+        public float batteryPercent = -1f;
+        public float batteryVoltage = -1f;
     }
 
     [Serializable]

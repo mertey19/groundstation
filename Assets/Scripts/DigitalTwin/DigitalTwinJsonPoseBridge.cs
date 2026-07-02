@@ -40,6 +40,7 @@ namespace GroundStation.DigitalTwin
         [SerializeField] private DigitalTwinRemoteState remoteState;
         [SerializeField] private DigitalTwinMissionEngine missionEngine;
         [SerializeField] private DigitalTwinImageryService imageryService;
+        [SerializeField] private DigitalTwinRoverRouteView roverRouteView;
 
         [Header("Poz")]
         [SerializeField] private bool applyYaw = true;
@@ -61,8 +62,18 @@ namespace GroundStation.DigitalTwin
         [SerializeField] private bool clearJsonTelemetryWhenStale = true;
         [SerializeField] private float jsonTelemetryTimeoutSeconds = 2.5f;
 
-        private long _lastSequenceId = -1;
-        private long _lastTimestampMs = -1;
+        // COKLU-KAYNAK dogrulama (PDF ortak harekat fazi): IHA + Rover ayni anda kendi
+        // sayaclariyla gonderir. Global tek sayac ikinci aracin TUM mesajlarini
+        // "out-of-order" diye reddederdi; durum kaynak (sourceId) basina tutulur.
+        private class SourceValidationState
+        {
+            public long lastSequenceId = -1;
+            public long lastTimestampMs = -1;
+            public float lastSeenAt = -1f;
+        }
+        private readonly Dictionary<string, SourceValidationState> _sourceStates = new Dictionary<string, SourceValidationState>();
+        [Tooltip("Kaynak bu kadar sn sustuktan sonra sequence/timestamp durumu sifirlanir (gonderici yeniden baslama toleransi).")]
+        [SerializeField] private float sourceResetTimeoutSeconds = 10f;
         private float _lastTelemetryReceivedAt = -1f;
         private bool _hasTargetPose;
         private Vector3 _targetPosition;
@@ -77,6 +88,22 @@ namespace GroundStation.DigitalTwin
         // Yorunge karsilastirma katmani bu iki olayi dinleyip GPS/SLAM izini ayri cizer.
         public event System.Action<Vector2d> OnUavGpsPose;
         public event System.Action<Vector2d> OnUavSlamPose;
+
+        /// <summary>Aracin konumunun su an hangi kaynaktan geldigi (GPS kaybi senaryosu gostergesi).</summary>
+        public enum TwinPoseSource { None, Gps, Slam }
+        public TwinPoseSource ActivePoseSource { get; private set; } = TwinPoseSource.None;
+        /// <summary>Son SLAM pozunun guven degeri (0-1); -1 = veri yok.</summary>
+        public float LastSlamConfidence { get; private set; } = -1f;
+        public event System.Action<TwinPoseSource> OnPoseSourceChanged;
+
+        private void SetPoseSource(TwinPoseSource source)
+        {
+            if (source == ActivePoseSource) return;
+            ActivePoseSource = source;
+            OnPoseSourceChanged?.Invoke(source);
+            if (source == TwinPoseSource.Slam && remoteState != null)
+                remoteState.SetWarning("GPS yok — konum VI-SLAM kestirimiyle sürdürülüyor.");
+        }
 
         private void Awake()
         {
@@ -134,7 +161,7 @@ namespace GroundStation.DigitalTwin
                         PublishStatus(DigitalTwinApplyStatusCode.InvalidJson, "JSON parse edilemedi", 0, 0, "");
                         return false;
                     }
-                    NormalizeMessage(msg);
+                    NormalizeMessage(msg, json);
                     return ApplyMessageV1(msg);
                 }
                 catch
@@ -164,10 +191,28 @@ namespace GroundStation.DigitalTwin
                        && json.IndexOf("\"latitude\"", System.StringComparison.Ordinal) >= 0);
         }
 
-        private static void NormalizeMessage(DigitalTwinMessageV1 msg)
+        private static void NormalizeMessage(DigitalTwinMessageV1 msg, string rawJson)
         {
             if (msg == null)
                 return;
+
+            // JsonUtility tuzagi: [Serializable] class alanlari JSON'da YOKSA bile default
+            // instance olarak gelir (asla null degil). Bu, meshLink gondermeyen mesajlarin
+            // sahte hop=0 ornekleri uretmesine ve yalniz-telemetri mesajlarinin araci
+            // (0,0) koordinatina isinlamasina yol acar. Ham JSON'da blok anahtari yoksa
+            // alani null'a cekerek asagi katmanlardaki null-check'leri anlamli kiliyoruz.
+            // Not: JSON case-sensitive oldugu icin "\"pose\"" araması "slamPose" ile eslesmez.
+            if (rawJson != null)
+            {
+                if (rawJson.IndexOf("\"pose\"", System.StringComparison.Ordinal) < 0) msg.pose = null;
+                if (rawJson.IndexOf("\"slamPose\"", System.StringComparison.Ordinal) < 0) msg.slamPose = null;
+                if (rawJson.IndexOf("\"telemetry\"", System.StringComparison.Ordinal) < 0) msg.telemetry = null;
+                if (rawJson.IndexOf("\"meshLink\"", System.StringComparison.Ordinal) < 0) msg.meshLink = null;
+                if (rawJson.IndexOf("\"mission\"", System.StringComparison.Ordinal) < 0) msg.mission = null;
+                if (rawJson.IndexOf("\"route\"", System.StringComparison.Ordinal) < 0) msg.route = null;
+                if (rawJson.IndexOf("\"imagery\"", System.StringComparison.Ordinal) < 0) msg.imagery = null;
+            }
+
             if (string.IsNullOrEmpty(msg.missionPhase) && msg.mission != null && !string.IsNullOrEmpty(msg.mission.phase))
                 msg.missionPhase = msg.mission.phase;
         }
@@ -196,17 +241,25 @@ namespace GroundStation.DigitalTwin
                 // Drone GPS pozunu takip eder; GPS yoksa SLAM'e duser. Her iki konum da
                 // yorunge karsilastirma katmanina yayinlanir (GNSS-bagimsizlik kaniti).
                 bool poseApplied = false;
+                TwinPoseSource poseSource = TwinPoseSource.None;
                 if (msg.pose != null)
                 {
                     poseApplied = ApplyVehiclePose(msg.pose);
+                    if (poseApplied) poseSource = TwinPoseSource.Gps;
                     OnUavGpsPose?.Invoke(new Vector2d(msg.pose.latitude, msg.pose.longitude));
                 }
                 if (msg.slamPose != null)
                 {
+                    LastSlamConfidence = msg.slamPose.confidence;
                     OnUavSlamPose?.Invoke(new Vector2d(msg.slamPose.latitude, msg.slamPose.longitude));
                     if (!poseApplied)
+                    {
+                        // GPS kesildi: SLAM kestirimine dus (PDF gorev senaryosu).
                         poseApplied = ApplySlamPose(msg.slamPose);
+                        if (poseApplied) poseSource = TwinPoseSource.Slam;
+                    }
                 }
+                if (poseApplied) SetPoseSource(poseSource);
                 applied |= poseApplied;
             }
             else if (isRoverPayload && (msg.pose != null || msg.slamPose != null))
@@ -261,6 +314,23 @@ namespace GroundStation.DigitalTwin
                     applied = true;
                     _lastTelemetryReceivedAt = Time.unscaledTime;
                 }
+            }
+
+            // ROVER rotasi (PDF: IHA VE Rover icin ortak ara nokta yonetimi):
+            // rover payload'indaki rota haritada ayri turuncu katman olarak cizilir.
+            if (isRoverPayload && msg.route != null && msg.route.waypoints != null && msg.route.waypoints.Length > 0)
+            {
+                if (roverRouteView == null)
+                {
+                    roverRouteView = FindObjectOfType<DigitalTwinRoverRouteView>();
+                    if (roverRouteView == null)
+                        roverRouteView = new GameObject("DigitalTwinRoverRouteView").AddComponent<DigitalTwinRoverRouteView>();
+                }
+                var roverPts = new List<Vector2d>(msg.route.waypoints.Length);
+                for (int i = 0; i < msg.route.waypoints.Length; i++)
+                    roverPts.Add(new Vector2d(msg.route.waypoints[i].latitude, msg.route.waypoints[i].longitude));
+                roverRouteView.SetRoute(roverPts);
+                applied = true;
             }
 
             bool shouldApplyRoute = isUavPayload
@@ -343,17 +413,35 @@ namespace GroundStation.DigitalTwin
                 }
             }
 
-            if (rejectOutOfOrderSequence && msg.sequenceId > 0 && _lastSequenceId > 0 && msg.sequenceId <= _lastSequenceId)
+            // Kaynak basina dogrulama durumu (IHA ve Rover paralel gonderebilsin).
+            string sourceKey = msg.sourceId ?? "";
+            SourceValidationState state;
+            if (!_sourceStates.TryGetValue(sourceKey, out state))
+            {
+                state = new SourceValidationState();
+                _sourceStates[sourceKey] = state;
+            }
+
+            // Gonderici yeniden basladiysa (uzun sessizlik) sayaci sifirla — kalici red olmasin.
+            float now = Time.unscaledTime;
+            if (state.lastSeenAt > 0f && sourceResetTimeoutSeconds > 0f &&
+                now - state.lastSeenAt > sourceResetTimeoutSeconds)
+            {
+                state.lastSequenceId = -1;
+                state.lastTimestampMs = -1;
+            }
+
+            if (rejectOutOfOrderSequence && msg.sequenceId > 0 && state.lastSequenceId > 0 && msg.sequenceId <= state.lastSequenceId)
             {
                 rejectCode = DigitalTwinApplyStatusCode.RejectedOutOfOrder;
-                rejectMessage = "Sequence sirasi geride";
+                rejectMessage = "Sequence sirasi geride (kaynak: " + sourceKey + ")";
                 return false;
             }
 
-            if (rejectOlderTimestamps && msg.timestampMs > 0 && _lastTimestampMs > 0 && msg.timestampMs < _lastTimestampMs)
+            if (rejectOlderTimestamps && msg.timestampMs > 0 && state.lastTimestampMs > 0 && msg.timestampMs < state.lastTimestampMs)
             {
                 rejectCode = DigitalTwinApplyStatusCode.RejectedOldTimestamp;
-                rejectMessage = "Timestamp eski";
+                rejectMessage = "Timestamp eski (kaynak: " + sourceKey + ")";
                 return false;
             }
 
@@ -368,8 +456,9 @@ namespace GroundStation.DigitalTwin
                 }
             }
 
-            if (msg.sequenceId > 0) _lastSequenceId = msg.sequenceId;
-            if (msg.timestampMs > 0) _lastTimestampMs = msg.timestampMs;
+            if (msg.sequenceId > 0) state.lastSequenceId = msg.sequenceId;
+            if (msg.timestampMs > 0) state.lastTimestampMs = msg.timestampMs;
+            state.lastSeenAt = now;
             return true;
         }
 

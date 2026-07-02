@@ -28,6 +28,8 @@ namespace GroundStation.DigitalTwin
         private readonly ConcurrentQueue<UdpPacket> _queue = new ConcurrentQueue<UdpPacket>();
         private IPEndPoint _lastSender;
         public int MaxMessagesPerFrame { get => maxMessagesPerFrame; set => maxMessagesPerFrame = Mathf.Clamp(value, 1, 500); }
+        /// <summary>Son paketi gonderen uc nokta (komut kanali icin hedef adres).</summary>
+        public IPEndPoint LastSenderEndpoint => _lastSender;
         public event System.Action<string> OnJsonReceived;
         public event System.Action<string> OnAckSent;
 

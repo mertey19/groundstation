@@ -45,6 +45,7 @@ namespace GroundStation.DigitalTwin
 
         private Vector2 _hudPos = new Vector2(-99999f, 0f);
         private bool _drag;
+        private GUIStyle _phaseStyle, _pctStyle;
 
         private IDigitalTwinIngress _ingress;
         private Coroutine _routine;
@@ -82,6 +83,13 @@ namespace GroundStation.DigitalTwin
             if (_routine != null) StopCoroutine(_routine);
             _routine = null;
             _playing = false;
+        }
+
+        private void OnDisable()
+        {
+            // Deaktivasyonda Unity coroutine'i sessizce oldurur; durumu deterministik sifirla
+            // (aksi halde HUD "Durdur" gosterir ama hicbir sey oynamaz).
+            Stop();
         }
 
         private Vector2 ResolveCenter()
@@ -139,13 +147,73 @@ namespace GroundStation.DigitalTwin
             return TwinOperationPhases.Complete;
         }
 
-        private void Send(DigitalTwinMessageV1 msg)
+        private void Send(DigitalTwinMessageV1 msg, bool stripGpsPose = false)
         {
             msg.schemaVersion = DigitalTwinJsonSchema.Version1;
             msg.sequenceId = ++_seq;
             msg.timestampMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             msg.authToken = authToken;
-            _ingress.TryApplyDigitalTwinJson(JsonUtility.ToJson(msg));
+            string json = JsonUtility.ToJson(msg);
+            // JsonUtility null class alanini bile default degerlerle yazar; GPS kesintisini
+            // gercekci simule etmek icin "pose" blogu JSON'dan tamamen cikarilir — bridge'in
+            // null-normalizasyonu boylece SLAM fallback'ini ve kaynak rozetini tetikler.
+            if (stripGpsPose)
+                json = RemoveJsonBlock(json, "pose");
+            _ingress.TryApplyDigitalTwinJson(json);
+        }
+
+        // Rover'in cektigi karekod fotografini simule eden kucuk uretilmis JPEG:
+        // ag uzerinden base64 iletim yolunun (imagery.imageBase64 -> galeri) ucta uca kanitidir.
+        private readonly System.Collections.Generic.Dictionary<string, string> _demoPhotoCache =
+            new System.Collections.Generic.Dictionary<string, string>();
+
+        private TwinImageryBlock BuildDemoPhoto(string targetId, Color tint)
+        {
+            string b64;
+            if (!_demoPhotoCache.TryGetValue(targetId, out b64))
+            {
+                var tex = new Texture2D(96, 96, TextureFormat.RGB24, false);
+                for (int py = 0; py < 96; py++)
+                    for (int px = 0; px < 96; px++)
+                    {
+                        bool stripe = ((px + py) / 12) % 2 == 0;
+                        bool qr = (px / 8 + py / 8) % 3 == 0 && px > 16 && px < 80 && py > 16 && py < 80;
+                        tex.SetPixel(px, py, qr ? Color.black : (stripe ? tint : Color.white));
+                    }
+                tex.Apply();
+                b64 = System.Convert.ToBase64String(tex.EncodeToJPG(70));
+                Destroy(tex);
+                _demoPhotoCache[targetId] = b64;
+            }
+            return new TwinImageryBlock
+            {
+                pipeline = "rover_cam",
+                mode = "qr_photo",
+                label = targetId,
+                targetId = targetId,
+                imageBase64 = b64,
+                overlayAlpha = 0.9f
+            };
+        }
+
+        private static string RemoveJsonBlock(string json, string key)
+        {
+            string k = "\"" + key + "\":";
+            int i = json.IndexOf(k, System.StringComparison.Ordinal);
+            if (i < 0) return json;
+            int braceStart = json.IndexOf('{', i + k.Length);
+            if (braceStart < 0) return json;
+            int depth = 0, j = braceStart;
+            for (; j < json.Length; j++)
+            {
+                if (json[j] == '{') depth++;
+                else if (json[j] == '}') { depth--; if (depth == 0) break; }
+            }
+            if (j >= json.Length) return json;
+            int end = j + 1;
+            if (end < json.Length && json[end] == ',') end++;
+            else if (i > 0 && json[i - 1] == ',') i--;
+            return json.Remove(i, end - i);
         }
 
         private void SendUav(int i, float t, string phase)
@@ -161,13 +229,17 @@ namespace GroundStation.DigitalTwin
             float dLat = ((Mathf.Sin(t * 9f) * 0.5f + 0.5f) * 0.000016f + t * 0.000006f) * driftScale;
             float dLon = (Mathf.Cos(t * 7f) * 0.000012f) * driftScale;
 
+            // GPS kesintisi senaryosu (PDF 2.1 "olasi sinyal kaybinda SLAM devreye alinir"):
+            // Faz 2'nin ortasinda GPS bloklari gonderilmez -> YKI kaynak rozeti SLAM'e doner.
+            bool gpsLoss = t >= 0.50f && t < 0.62f;
+
             var msg = new DigitalTwinMessageV1
             {
                 sourceId = "demo-uav",
                 vehicleType = TwinVehicleTypes.Uav,
                 missionPhase = phase,
                 pose = new TwinPoseBlock { latitude = gpsLat, longitude = gpsLon, altitudeM = baseAltitudeM + Mathf.Sin(ang * 2f) * 3f, yawDeg = yaw },
-                slamPose = new TwinSlamPoseBlock { latitude = gpsLat + dLat, longitude = gpsLon + dLon, altitudeM = baseAltitudeM, yawDeg = yaw, confidence = 0.9f },
+                slamPose = new TwinSlamPoseBlock { latitude = gpsLat + dLat, longitude = gpsLon + dLon, altitudeM = baseAltitudeM, yawDeg = yaw, confidence = gpsLoss ? 0.82f : 0.93f },
                 telemetry = BuildTelemetry(t, phase),
                 meshLink = BuildMesh(phase),
                 mission = new TwinMissionDelta
@@ -175,7 +247,8 @@ namespace GroundStation.DigitalTwin
                     phase = phase,
                     status = phase == TwinOperationPhases.Complete ? "complete" : "running",
                     activeVehicle = TwinVehicleTypes.Uav,
-                    warning = phase == TwinOperationPhases.DynamicReplan ? "Hareketli engel: rover rotasi guncelleniyor" : "",
+                    warning = gpsLoss ? "GPS sinyali kesildi — VI-SLAM kestirimi devrede"
+                        : (phase == TwinOperationPhases.DynamicReplan ? "Hareketli engel: rover rotasi guncelleniyor" : ""),
                     note = NoteFor(phase)
                 }
             };
@@ -188,7 +261,7 @@ namespace GroundStation.DigitalTwin
             }
 
             AttachScriptedEntities(msg, i, t, phase);
-            Send(msg);
+            Send(msg, gpsLoss);
         }
 
         private void SendRover(int i, float t, string phase)
@@ -227,7 +300,10 @@ namespace GroundStation.DigitalTwin
                 signalDbm = m.signalDbm,
                 snrDb = m.snrDb,
                 latencyMs = m.latencyMs,
-                packetLossPercent = m.packetLossPercent
+                packetLossPercent = m.packetLossPercent,
+                // Fail-safe paneli icin gerceklesen batarya tuketimi simulasyonu.
+                batteryPercent = Mathf.Lerp(98f, 46f, t),
+                batteryVoltage = Mathf.Lerp(25.1f, 22.2f, t)
             };
         }
 
@@ -318,11 +394,30 @@ namespace GroundStation.DigitalTwin
                 });
             }
 
+            // Rover hedeflere SIRAYLA ulasir; karekodlarin COZULMUS icerigi okunur
+            // (hedef listesi panelinde "qr-A OKUNDU: ..." olarak gorunur — hakem kaniti).
+            if (phase == TwinOperationPhases.JointOperation && t >= 0.55f)
+            {
+                targets.Add(new TwinTargetDelta { id = "qr-A", operation = "upsert", kind = "qrcode", latitude = _targetA.x, longitude = _targetA.y, reached = true, confidence = 0.97f, decodedContent = "KESIF-A | magara girisi guvenli" });
+                if (t < 0.57f)
+                    msg.imagery = BuildDemoPhoto("qr-A", new Color(0.35f, 0.65f, 1f));
+            }
+
+            if (phase == TwinOperationPhases.DynamicReplan && t >= 0.80f)
+            {
+                targets.Add(new TwinTargetDelta { id = "qr-B", operation = "upsert", kind = "qrcode", latitude = _targetB.x, longitude = _targetB.y, reached = true, confidence = 0.95f, decodedContent = "KESIF-B | engel raporlandi" });
+                if (t < 0.82f)
+                    msg.imagery = BuildDemoPhoto("qr-B", new Color(1f, 0.62f, 0.2f));
+            }
+
+            if (phase == TwinOperationPhases.Complete && i % 4 == 0 && msg.imagery == null)
+                msg.imagery = BuildDemoPhoto("qr-C", new Color(0.4f, 0.9f, 0.5f));
+
             if (phase == TwinOperationPhases.Complete && i % 4 == 0)
             {
-                targets.Add(new TwinTargetDelta { id = "qr-A", operation = "upsert", kind = "qrcode", latitude = _targetA.x, longitude = _targetA.y, reached = true, confidence = 0.97f });
-                targets.Add(new TwinTargetDelta { id = "qr-B", operation = "upsert", kind = "qrcode", latitude = _targetB.x, longitude = _targetB.y, reached = true, confidence = 0.95f });
-                targets.Add(new TwinTargetDelta { id = "qr-C", operation = "upsert", kind = "qrcode", latitude = _targetC.x, longitude = _targetC.y, reached = true, confidence = 0.93f });
+                targets.Add(new TwinTargetDelta { id = "qr-A", operation = "upsert", kind = "qrcode", latitude = _targetA.x, longitude = _targetA.y, reached = true, confidence = 0.97f, decodedContent = "KESIF-A | magara girisi guvenli" });
+                targets.Add(new TwinTargetDelta { id = "qr-B", operation = "upsert", kind = "qrcode", latitude = _targetB.x, longitude = _targetB.y, reached = true, confidence = 0.95f, decodedContent = "KESIF-B | engel raporlandi" });
+                targets.Add(new TwinTargetDelta { id = "qr-C", operation = "upsert", kind = "qrcode", latitude = _targetC.x, longitude = _targetC.y, reached = true, confidence = 0.93f, decodedContent = "KESIF-C | gorev tamamlandi" });
             }
 
             if (obstacles.Count > 0) msg.obstacles = obstacles.ToArray();
@@ -333,15 +428,16 @@ namespace GroundStation.DigitalTwin
         private void OnGUI()
         {
             if (!showHud) return;
+            TwinHudTheme.BeginScaledHud();
             float w = 344f, h = 78f;
-            Vector2 def = new Vector2((Screen.width - w) * 0.5f, Screen.height - h - 60f);
+            Vector2 def = new Vector2((TwinHudTheme.ScreenW - w) * 0.5f, TwinHudTheme.ScreenH - h - 60f);
             Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_demo");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;
             GUI.Label(new Rect(x, y, w - 130f, 18f), "DEMO SENARYO", TwinHudTheme.Title);
-            var ph = new GUIStyle(TwinHudTheme.Small) { alignment = TextAnchor.MiddleRight, fontStyle = FontStyle.Bold, normal = { textColor = TwinHudTheme.Accent } };
-            GUI.Label(new Rect(x, y, w - 32f, 18f), PhaseLabelTr(_phase), ph);
+            if (_phaseStyle == null) _phaseStyle = new GUIStyle(TwinHudTheme.Small) { alignment = TextAnchor.MiddleRight, fontStyle = FontStyle.Bold, normal = { textColor = TwinHudTheme.Accent } };
+            GUI.Label(new Rect(x, y, w - 32f, 18f), PhaseLabelTr(_phase), _phaseStyle);
             y += 25f;
 
             var bar = new Rect(x, y, w - 32f, 9f);
@@ -353,8 +449,9 @@ namespace GroundStation.DigitalTwin
             {
                 if (_playing) Stop(); else Play();
             }
-            GUI.Label(new Rect(x + 106f, y, w - 122f, 21f), $"%{_progress * 100f:F0}",
-                new GUIStyle(TwinHudTheme.Small) { alignment = TextAnchor.MiddleLeft });
+            if (_pctStyle == null) _pctStyle = new GUIStyle(TwinHudTheme.Small) { alignment = TextAnchor.MiddleLeft };
+            GUI.Label(new Rect(x + 106f, y, w - 122f, 21f), $"%{_progress * 100f:F0}", _pctStyle);
+            TwinHudTheme.EndScaledHud();
         }
 
         private static string PhaseLabelTr(string phase)

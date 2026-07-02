@@ -49,6 +49,11 @@ namespace GroundStation.DigitalTwin
                 return false;
             }
 
+            // Ag uzerinden gelen goruntu (base64) — rover fotograflari mesh uzerinden
+            // JSON ile tasinabilir; dosya sistemi paylasimi gerekmez.
+            if (!string.IsNullOrEmpty(block.imageBase64))
+                return TryApplyBase64Imagery(block, sourceId);
+
             if (IsVideoImagery(block))
                 return TryApplyVideoImagery(block, sourceId);
 
@@ -100,6 +105,49 @@ namespace GroundStation.DigitalTwin
             if (string.IsNullOrEmpty(shortPath))
                 shortPath = block.resourceTexturePath ?? "";
             SetStatus(block, sourceId, string.Format(CultureInfo.InvariantCulture, "OK | {0}", shortPath));
+            return true;
+        }
+
+        private DigitalTwinQrGalleryPanel _gallery;
+
+        private bool TryApplyBase64Imagery(TwinImageryBlock block, string sourceId)
+        {
+            byte[] bytes;
+            try { bytes = Convert.FromBase64String(block.imageBase64); }
+            catch { SetStatus(block, sourceId, "base64 cozulemedi"); return false; }
+
+            bool isQrPhoto = !string.IsNullOrEmpty(block.targetId) ||
+                             (!string.IsNullOrEmpty(block.mode) && block.mode.IndexOf("qr", StringComparison.OrdinalIgnoreCase) >= 0);
+
+            // Hedef fotograflari galeriye dusur (hakem sunumu icin arsiv).
+            if (_gallery == null) _gallery = FindObjectOfType<DigitalTwinQrGalleryPanel>();
+            if (_gallery != null)
+                _gallery.AddPhoto(string.IsNullOrEmpty(block.targetId) ? (string.IsNullOrEmpty(block.label) ? sourceId : block.label) : block.targetId, bytes);
+
+            if (!isQrPhoto)
+            {
+                // Genel goruntu: twin viewport'ta goster (mevcut dosya-yolu akisiyla ayni).
+                StopVideoIfPlaying();
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!tex.LoadImage(bytes))
+                {
+                    Destroy(tex);
+                    SetStatus(block, sourceId, "base64 goruntu cozulemedi");
+                    return false;
+                }
+                ReleaseOwnedTexture();
+                _loadedTexture = tex;
+                _textureIsOwned = true;
+                _raw.texture = tex;
+                float a = Mathf.Clamp01(block.overlayAlpha <= 0f ? 0.88f : block.overlayAlpha);
+                var col = _raw.color;
+                col.a = a;
+                _raw.color = col;
+                _raw.enabled = true;
+                _raw.raycastTarget = false;
+            }
+
+            SetStatus(block, sourceId, "OK | base64 " + (bytes.Length / 1024) + " KB" + (isQrPhoto ? " (galeri)" : ""));
             return true;
         }
 

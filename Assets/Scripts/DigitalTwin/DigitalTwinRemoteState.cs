@@ -33,6 +33,10 @@ namespace GroundStation.DigitalTwin
         public string LastMeshText { get; private set; } = "";
         public TwinMeshStatus LastMeshStatus { get; private set; }
         public bool HasMeshStatus { get; private set; }
+        public string LastBatteryText { get; private set; } = "";
+        /// <summary>Son batarya yuzdesi; -1 = veri yok.</summary>
+        public float LastBatteryPercent { get; private set; } = -1f;
+        public float LastBatteryVoltage { get; private set; } = -1f;
         public string LastWarningText { get; private set; } = "";
         public string LastVehicleStatusText { get; private set; } = "";
         public string LastImageryStatusText { get; private set; } = "";
@@ -59,6 +63,14 @@ namespace GroundStation.DigitalTwin
             LastSpeedText = string.Format(CultureInfo.InvariantCulture, "H\u0131z: {0:F1} m/s", t.speedMps);
             LastModeText = string.IsNullOrEmpty(t.mode) ? "Mod: (JSON)" : "Mod: " + t.mode;
             LastWaypointText = string.Format(CultureInfo.InvariantCulture, "WP: {0}", t.waypointIndex);
+            if (t.batteryPercent >= 0f)
+            {
+                LastBatteryPercent = Mathf.Clamp(t.batteryPercent, 0f, 100f);
+                LastBatteryVoltage = t.batteryVoltage;
+                LastBatteryText = t.batteryVoltage > 0f
+                    ? string.Format(CultureInfo.InvariantCulture, "Batarya: %{0:F0} ({1:F1} V)", LastBatteryPercent, t.batteryVoltage)
+                    : string.Format(CultureInfo.InvariantCulture, "Batarya: %{0:F0}", LastBatteryPercent);
+            }
             LastSourceId = sourceId ?? "";
             LastTimestampMs = timestampMs;
             LastMeshText = BuildMeshText(t.hopCount, t.signalDbm, t.snrDb, t.latencyMs, t.packetLossPercent, 0f, false);
@@ -159,6 +171,9 @@ namespace GroundStation.DigitalTwin
             LastVehicleStatusText = "";
             LastImageryStatusText = "";
             HasMeshStatus = false;
+            LastBatteryText = "";
+            LastBatteryPercent = -1f;
+            LastBatteryVoltage = -1f;
             LastSourceId = "";
             LastVehicleType = "";
             LastMissionPhase = "";

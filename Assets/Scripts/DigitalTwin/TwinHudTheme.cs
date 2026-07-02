@@ -23,6 +23,29 @@ namespace GroundStation.DigitalTwin
 
         private static bool _init;
         private static GUIStyle _title, _label, _small, _value, _badge, _button;
+        private static Matrix4x4 _savedMatrix = Matrix4x4.identity;
+
+        // --- Cozunurluk olcekleme (4K / projektor okunabilirligi) ---
+        // Paneller 1080p "sanal" koordinatlarda cizilir; GUI.matrix hem cizimi hem
+        // IMGUI girdisini olcekler. Panel konumlamada Screen.width yerine ScreenW kullan.
+        public static float UiScale => Mathf.Max(1f, Screen.height / 1080f);
+        public static float ScreenW => Screen.width / UiScale;
+        public static float ScreenH => Screen.height / UiScale;
+
+        /// <summary>OnGUI basinda cagir; donen deger olcek. Sonunda EndScaledHud() cagir.</summary>
+        public static float BeginScaledHud()
+        {
+            _savedMatrix = GUI.matrix;
+            float s = UiScale;
+            if (s > 1.001f)
+                GUI.matrix = Matrix4x4.Scale(new Vector3(s, s, 1f)) * _savedMatrix;
+            return s;
+        }
+
+        public static void EndScaledHud()
+        {
+            GUI.matrix = _savedMatrix;
+        }
 
         public static GUIStyle Title { get { Init(); return _title; } }
         public static GUIStyle Label { get { Init(); return _label; } }
@@ -75,21 +98,22 @@ namespace GroundStation.DigitalTwin
             if (e != null)
             {
                 if (e.type == EventType.MouseDown && e.button == 0 && titleBar.Contains(e.mousePosition)) { dragging = true; e.Use(); }
-                else if (e.type == EventType.MouseUp && e.button == 0)
+                else if (e.rawType == EventType.MouseUp && e.button == 0)
                 {
+                    // rawType: fare pencere DISINDA birakilsa da MouseUp yakalanir
+                    // (dragging'in asili kalmasini onler).
                     if (dragging && !string.IsNullOrEmpty(prefsKey))
                     {
-                        // Surukleme bitti -> konumu kalici kaydet.
+                        // Surukleme bitti -> konumu kalici kaydet (PlayerPrefs cikista flush edilir).
                         PlayerPrefs.SetFloat(prefsKey + "_x", pos.x);
                         PlayerPrefs.SetFloat(prefsKey + "_y", pos.y);
-                        PlayerPrefs.Save();
                     }
                     dragging = false;
                 }
                 else if (dragging && e.type == EventType.MouseDrag) { pos += e.delta; e.Use(); }
             }
-            pos.x = Mathf.Clamp(pos.x, 0f, Mathf.Max(0f, Screen.width - w));
-            pos.y = Mathf.Clamp(pos.y, 0f, Mathf.Max(0f, Screen.height - h));
+            pos.x = Mathf.Clamp(pos.x, 0f, Mathf.Max(0f, ScreenW - w));
+            pos.y = Mathf.Clamp(pos.y, 0f, Mathf.Max(0f, ScreenH - h));
             return new Rect(pos.x, pos.y, w, h);
         }
 

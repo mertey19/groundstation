@@ -23,6 +23,8 @@ namespace GroundStation.DigitalTwin
         private Quaternion _targetRotation = Quaternion.identity;
 
         public bool HasRover => roverTransform != null;
+        /// <summary>Haritada hareket eden gercek rover objesi (geofence/mesafe kontrolleri icin).</summary>
+        public Transform RoverTransform => roverTransform;
 
         private void Awake()
         {

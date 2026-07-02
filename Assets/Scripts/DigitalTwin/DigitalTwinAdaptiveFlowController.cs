@@ -18,6 +18,15 @@ namespace GroundStation.DigitalTwin
         [SerializeField] private GameObject liveVideoRoot;
         [SerializeField] private bool disableVideoInTwinOnly = true;
 
+        /// <summary>
+        /// PDF 3.4.2: "operator inisiyatifiyle canli kamera kapatilarak tamamen Dijital
+        /// Ikiz moduna gecilebilmektedir" — kamera panelindeki dugmeyle set edilir.
+        /// </summary>
+        public bool ManualTwinOnly { get; set; }
+
+        public bool EffectiveTwinOnly =>
+            ManualTwinOnly || (missionEngine != null && missionEngine.TwinOnlyModeRecommended);
+
         private bool _lastTwinOnly;
         private bool _lastEmergency;
 
@@ -33,7 +42,7 @@ namespace GroundStation.DigitalTwin
             if (missionEngine == null || udpIngress == null)
                 return;
 
-            bool twinOnly = missionEngine.TwinOnlyModeRecommended;
+            bool twinOnly = missionEngine.TwinOnlyModeRecommended || ManualTwinOnly;
             bool emergency = missionEngine.EmergencyTwinOnly;
             if (twinOnly == _lastTwinOnly && emergency == _lastEmergency)
                 return;

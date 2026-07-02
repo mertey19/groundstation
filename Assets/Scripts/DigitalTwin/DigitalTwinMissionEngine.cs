@@ -63,6 +63,17 @@ namespace GroundStation.DigitalTwin
         private int _lastHopCount = -1;
         private bool _twinOnlyModeRecommended;
         private bool _emergencyTwinOnly;
+        private bool _lastRelayActive;
+
+        // Hedef (karekod) takibi: hakem kaniti icin okunan icerik + basari sayaci.
+        private readonly Dictionary<string, bool> _targetReachedState = new Dictionary<string, bool>();
+        private readonly Dictionary<string, string> _targetContents = new Dictionary<string, string>();
+        private readonly List<string> _targetOrder = new List<string>();
+
+        // Leak onleme: entity'ler TEK paylasilan materyali kullanir; renkler
+        // MaterialPropertyBlock ile verilir (instanced material sizintisi + GC yok).
+        private static Material _sharedEntityMaterial;
+        private static MaterialPropertyBlock _sharedMpb;
 
         public string CurrentPhase => _currentPhase;
         public string CurrentPhaseStatus => _phaseStatus;
@@ -74,6 +85,36 @@ namespace GroundStation.DigitalTwin
         public IReadOnlyList<MissionEvent> EventLog => _eventLog;
         public IReadOnlyList<Vector3> LastRoverDetour => _lastRoverDetour;
         public bool HasRoverDetour => _lastRoverDetour.Count >= 3;
+
+        /// <summary>Mesh ornek gecmisi (sparkline/trend gorsellestirmesi icin).</summary>
+        public IReadOnlyList<MeshSample> MeshHistory => _meshHistory;
+
+        public struct TargetInfo
+        {
+            public string id;
+            public bool reached;
+            public string content;
+        }
+
+        public int TargetsReachedCount { get; private set; }
+        public int TargetsTotalCount => _targetOrder.Count;
+
+        /// <summary>Hedefleri ekleme sirasiyla doldurur (karekod listesi paneli icin).</summary>
+        public void GetTargetInfos(List<TargetInfo> buffer)
+        {
+            if (buffer == null) return;
+            buffer.Clear();
+            for (int i = 0; i < _targetOrder.Count; i++)
+            {
+                string id = _targetOrder[i];
+                bool reached;
+                _targetReachedState.TryGetValue(id, out reached);
+                string content;
+                _targetContents.TryGetValue(id, out content);
+                buffer.Add(new TargetInfo { id = id, reached = reached, content = content ?? "" });
+            }
+        }
+
         public event System.Action<MissionEvent> OnMissionEvent;
 
         private void Awake()
@@ -109,21 +150,21 @@ namespace GroundStation.DigitalTwin
         {
             bool uavOnline = IsVehicleOnline(TwinVehicleTypes.Uav);
             bool roverOnline = IsVehicleOnline(TwinVehicleTypes.Rover);
-            string streamMode = _twinOnlyModeRecommended ? "TwinOnly" : "Hybrid";
+            string streamMode = _twinOnlyModeRecommended ? "Yalnız İkiz" : "Hibrit";
             if (_emergencyTwinOnly)
-                streamMode = "EmergencyTwinOnly";
-            return "Link: UAV " + (uavOnline ? "Online" : "Offline") + " | Rover " + (roverOnline ? "Online" : "Offline") + " | Stream " + streamMode;
+                streamMode = "ACİL·Yalnız İkiz";
+            return "Bağlantı: İHA " + (uavOnline ? "Çevrimiçi" : "Çevrimdışı") + " | Rover " + (roverOnline ? "Çevrimiçi" : "Çevrimdışı") + " | Akış " + streamMode;
         }
 
         public string BuildMeshTrendSummary()
         {
             if (_meshHistory.Count < 2)
-                return "MeshTrend: waiting-data";
+                return "Mesh eğilimi: veri bekleniyor";
             var first = _meshHistory[0];
             var last = _meshHistory[_meshHistory.Count - 1];
             float qualityDelta = last.linkQualityPercent - first.linkQualityPercent;
-            string trend = qualityDelta > 5f ? "up" : qualityDelta < -5f ? "down" : "stable";
-            return "MeshTrend: " + trend + " (" + qualityDelta.ToString("F0") + ")";
+            string trend = qualityDelta > 5f ? "yükseliyor" : qualityDelta < -5f ? "düşüyor" : "stabil";
+            return "Mesh eğilimi: " + trend + " (" + qualityDelta.ToString("F0") + ")";
         }
 
         private bool IsVehicleOnline(string vehicleType)
@@ -215,12 +256,7 @@ namespace GroundStation.DigitalTwin
                 PlaceByGeo(go.transform, delta.latitude, delta.longitude, markerYOffset + 1f);
                 float size = Mathf.Max(0.6f, delta.radiusM > 0.01f ? delta.radiusM * 2f : obstacleDefaultSize);
                 go.transform.localScale = new Vector3(size, size, size);
-                var obsR = go.GetComponent<Renderer>();
-                if (obsR != null)
-                {
-                    obsR.material.color = obsColor;
-                    obsR.material.SetColor("_EmissionColor", new Color(obsColor.r, obsColor.g, obsColor.b) * (0.35f + 0.5f * sev));
-                }
+                SetEntityColor(go.GetComponent<Renderer>(), obsColor, 0.35f + 0.5f * sev);
             }
             return changed;
         }
@@ -244,6 +280,13 @@ namespace GroundStation.DigitalTwin
             if (_lastHopCount >= 0 && mesh.hopCount != _lastHopCount)
                 PushEvent("mesh_hop_change", _lastHopCount + "->" + mesh.hopCount);
             _lastHopCount = mesh.hopCount;
+
+            // Relay gecisi operator icin kritik an — olay gunlugune dusur (panel yakalar).
+            if (mesh.relayModeActive != _lastRelayActive)
+            {
+                PushEvent("relay_mode_change", mesh.relayModeActive ? "RELAY aktif (IHA uzerinden)" : "dogrudan baglantiya donuldu");
+                _lastRelayActive = mesh.relayModeActive;
+            }
             return true;
         }
 
@@ -314,6 +357,15 @@ namespace GroundStation.DigitalTwin
             return Vector3.zero;
         }
 
+        /// <summary>
+        /// Dis bilesenlerin (geofence, komut kanali, operator mudahalesi) gorev olay
+        /// gunlugune kayit dusmesi icin genel API.
+        /// </summary>
+        public void PushExternalEvent(string eventType, string details)
+        {
+            PushEvent(eventType, details);
+        }
+
         private void PushEvent(string eventType, string details)
         {
             var evt = new MissionEvent
@@ -343,7 +395,34 @@ namespace GroundStation.DigitalTwin
                 if (op == "remove")
                 {
                     changed |= RemoveEntity(_targets, delta.id);
+                    _targetReachedState.Remove(delta.id);
+                    _targetContents.Remove(delta.id);
+                    _targetOrder.Remove(delta.id);
+                    RecountReachedTargets();
                     continue;
+                }
+
+                // Hedef takibi: karekod icerigi + ilk "ulasildi" gecisinde olay + sayac.
+                if (!_targetOrder.Contains(delta.id))
+                    _targetOrder.Add(delta.id);
+                if (!string.IsNullOrEmpty(delta.decodedContent))
+                    _targetContents[delta.id] = delta.decodedContent;
+                bool wasReached;
+                _targetReachedState.TryGetValue(delta.id, out wasReached);
+                if (delta.reached && !wasReached)
+                {
+                    _targetReachedState[delta.id] = true;
+                    RecountReachedTargets();
+                    string content;
+                    _targetContents.TryGetValue(delta.id, out content);
+                    PushEvent("target_reached", delta.id
+                        + (string.IsNullOrEmpty(content) ? "" : " icerik=\"" + content + "\"")
+                        + " (" + TargetsReachedCount + "/" + TargetsTotalCount + ")");
+                }
+                else if (!_targetReachedState.ContainsKey(delta.id))
+                {
+                    _targetReachedState[delta.id] = delta.reached;
+                    RecountReachedTargets();
                 }
 
                 Color tColor = delta.reached ? new Color(0.25f, 0.95f, 0.35f, 1f) : new Color(0.2f, 0.8f, 1f, 1f);
@@ -354,13 +433,7 @@ namespace GroundStation.DigitalTwin
                 float tSize = Mathf.Max(0.6f, targetDefaultSize);
                 PlaceByGeo(go.transform, delta.latitude, delta.longitude, markerYOffset + tSize);
                 go.transform.localScale = new Vector3(tSize * 0.55f, tSize, tSize * 0.55f);
-
-                var renderer = go.GetComponent<Renderer>();
-                if (renderer != null)
-                {
-                    renderer.material.color = tColor;
-                    renderer.material.SetColor("_EmissionColor", new Color(tColor.r, tColor.g, tColor.b) * 0.55f);
-                }
+                SetEntityColor(go.GetComponent<Renderer>(), tColor, 0.55f);
             }
             return changed;
         }
@@ -392,12 +465,7 @@ namespace GroundStation.DigitalTwin
                 PlaceByGeo(go.transform, delta.latitude, delta.longitude, Mathf.Max(markerYOffset, delta.altitudeM));
                 float size = Mathf.Max(0.2f, delta.sizeM > 0.01f ? delta.sizeM : voxelDefaultSize);
                 go.transform.localScale = Vector3.one * size;
-                var renderer = go.GetComponent<Renderer>();
-                if (renderer != null)
-                {
-                    renderer.material.color = voxColor;
-                    renderer.material.SetColor("_EmissionColor", new Color(voxColor.r, voxColor.g, voxColor.b) * (0.2f + 0.4f * occ));
-                }
+                SetEntityColor(go.GetComponent<Renderer>(), voxColor, 0.2f + 0.4f * occ);
             }
             return changed;
         }
@@ -445,21 +513,43 @@ namespace GroundStation.DigitalTwin
             var renderer = go.GetComponent<Renderer>();
             if (renderer != null)
             {
-                var shader = Shader.Find("Standard");
-                var mat = shader != null ? new Material(shader) : new Material(Shader.Find("Unlit/Color"));
-                mat.color = color;
-                if (emissive && shader != null)
-                {
-                    mat.EnableKeyword("_EMISSION");
-                    mat.SetColor("_EmissionColor", new Color(color.r, color.g, color.b) * 0.55f);
-                }
-                renderer.material = mat;
+                renderer.sharedMaterial = SharedEntityMaterial();
+                SetEntityColor(renderer, color, emissive ? 0.55f : 0f);
                 renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 renderer.receiveShadows = false;
             }
 
             map[id] = go;
             return go;
+        }
+
+        private void RecountReachedTargets()
+        {
+            int n = 0;
+            foreach (var kv in _targetReachedState)
+                if (kv.Value) n++;
+            TargetsReachedCount = n;
+        }
+
+        private static Material SharedEntityMaterial()
+        {
+            if (_sharedEntityMaterial != null) return _sharedEntityMaterial;
+            var shader = Shader.Find("Standard");
+            if (shader == null) shader = Shader.Find("Unlit/Color");
+            _sharedEntityMaterial = new Material(shader) { name = "TwinEntityShared" };
+            _sharedEntityMaterial.EnableKeyword("_EMISSION");
+            _sharedEntityMaterial.hideFlags = HideFlags.HideAndDontSave;
+            return _sharedEntityMaterial;
+        }
+
+        private static void SetEntityColor(Renderer r, Color color, float emission)
+        {
+            if (r == null) return;
+            if (_sharedMpb == null) _sharedMpb = new MaterialPropertyBlock();
+            r.GetPropertyBlock(_sharedMpb);
+            _sharedMpb.SetColor("_Color", color);
+            _sharedMpb.SetColor("_EmissionColor", new Color(color.r, color.g, color.b) * Mathf.Max(0f, emission));
+            r.SetPropertyBlock(_sharedMpb);
         }
 
         private Transform EnsureRoot(string rootName)

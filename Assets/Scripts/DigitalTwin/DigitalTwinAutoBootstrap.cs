@@ -22,6 +22,10 @@ namespace GroundStation.DigitalTwin
 
         private void Awake()
         {
+            // DEMO GUNU KRITIK: pencere odagi kaybolsa da (hakem sunumu, slayt gecisi)
+            // telemetri islenmeye devam etsin — aksi halde YKI donar, mesajlar birikir.
+            Application.runInBackground = true;
+
             if (runOnAwake)
                 EnsureSetup();
         }
@@ -32,6 +36,33 @@ namespace GroundStation.DigitalTwin
             ResolveRoots();
             EnsureBridgeComponents();
             EnsureReferences();
+            EnsureHudPanels();
+        }
+
+        /// <summary>
+        /// HUD panelleri Editor menusune bagimli birakilmaz: build'de de var olmalari
+        /// icin bootstrap'ta garanti edilir (fail-safe, kamera, yorunge, mesh, hedef
+        /// listesi, gorev ozeti, geofence, komut kanali).
+        /// </summary>
+        private void EnsureHudPanels()
+        {
+            EnsureSingleton<DigitalTwinTrajectoryComparison>("DigitalTwinTrajectoryComparison");
+            EnsureSingleton<DigitalTwinMeshTopologyPanel>("DigitalTwinMeshTopologyPanel");
+            EnsureSingleton<DigitalTwinCameraFeedPanel>("DigitalTwinCameraFeedPanel");
+            EnsureSingleton<DigitalTwinFlightSafetyPanel>("DigitalTwinFlightSafetyPanel");
+            EnsureSingleton<DigitalTwinTargetListPanel>("DigitalTwinTargetListPanel");
+            EnsureSingleton<DigitalTwinMissionSummaryPanel>("DigitalTwinMissionSummaryPanel");
+            EnsureSingleton<DigitalTwinGeofence>("DigitalTwinGeofence");
+            EnsureSingleton<DigitalTwinCommandEgress>("DigitalTwinCommandEgress");
+            EnsureSingleton<DigitalTwinQrGalleryPanel>("DigitalTwinQrGalleryPanel");
+            EnsureSingleton<DigitalTwinRoverRouteView>("DigitalTwinRoverRouteView");
+        }
+
+        private static void EnsureSingleton<T>(string objectName) where T : Component
+        {
+            if (FindObjectOfType<T>() != null) return;
+            var go = new GameObject(objectName);
+            go.AddComponent<T>();
         }
 
         private void ResolveRoots()

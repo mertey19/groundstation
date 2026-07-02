@@ -21,7 +21,8 @@ namespace GroundStation.Routes
         [SerializeField] private MapClickSpawner mapClickSpawner;
         [SerializeField] private bool showSelectionRectangle = true;
         [Header("Debug")]
-        [SerializeField] private bool showRuntimeDebugStatus = true;
+        [Tooltip("Uretim/demoda kapali tutun; ekranda sari debug metni gosterir.")]
+        [SerializeField] private bool showRuntimeDebugStatus = false;
 
         [Header("Preview Style")]
         [SerializeField] private float previewLineWidth = 0.35f;
@@ -43,6 +44,10 @@ namespace GroundStation.Routes
         private MeshRenderer _fillMeshRenderer;
         private readonly List<Vector3> _polygonPoints = new List<Vector3>();
         private readonly List<GameObject> _vertexMarkers = new List<GameObject>();
+        private Mesh _fillMesh;              // yeniden kullanilan dolgu mesh'i (leak onleme)
+        private Material _markerMaterial;    // tum kose tutamaclarinin paylastigi tek materyal
+        private float _nextRefResolveAt;
+        private string _lastShownDebug = "";
         private Text _debugText;
         private string _lastStatus = "Idle";
 
@@ -255,8 +260,21 @@ namespace GroundStation.Routes
             _preview.endWidth = width;
         }
 
+        private void OnDestroy()
+        {
+            // Instanced kaynaklar GameObject destroy ile toplanmaz; elle temizle.
+            if (_fillMesh != null) Destroy(_fillMesh);
+            if (_markerMaterial != null) Destroy(_markerMaterial);
+            if (_preview != null && _preview.material != null) Destroy(_preview.material);
+            if (_fillMeshRenderer != null && _fillMeshRenderer.sharedMaterial != null) Destroy(_fillMeshRenderer.sharedMaterial);
+        }
+
         private void EnsureRuntimeRefs()
         {
+            // Sahne taramasini zamana bagla: eksik referans varsa 2 sn'de bir dene
+            // (secim boyunca her frame FindObjectOfType maliyetini onler).
+            if (Time.unscaledTime < _nextRefResolveAt) return;
+            _nextRefResolveAt = Time.unscaledTime + 2f;
             if (mapCamera == null) mapCamera = Camera.main;
             if (mapCamera == null)
             {
@@ -374,15 +392,19 @@ namespace GroundStation.Routes
             int[] tris = TriangulateXZ(verts);
             if (tris == null || tris.Length < 3) return;
 
-            var mesh = new Mesh();
-            mesh.SetVertices(verts);
-            mesh.SetTriangles(tris, 0);
+            // Mesh'i YENIDEN KULLAN: her cizimde new Mesh() Unity'de GC ile toplanmaz,
+            // her poligon noktasinda yeni mesh sizardi.
+            if (_fillMesh == null)
+                _fillMesh = new Mesh { name = "SurveyFillMesh" };
+            _fillMesh.Clear();
+            _fillMesh.SetVertices(verts);
+            _fillMesh.SetTriangles(tris, 0);
             var cols = new Color[verts.Count];
             var fc = new Color(0.20f, 0.58f, 1f, 0.30f);   // yari saydam mavi dolgu
             for (int ci = 0; ci < cols.Length; ci++) cols[ci] = fc;
-            mesh.SetColors(cols);
-            mesh.RecalculateNormals();
-            _fillMeshFilter.sharedMesh = mesh;
+            _fillMesh.SetColors(cols);
+            _fillMesh.RecalculateNormals();
+            _fillMeshFilter.sharedMesh = _fillMesh;
             if (_fillMeshRenderer != null) _fillMeshRenderer.enabled = true;
         }
 
@@ -398,9 +420,14 @@ namespace GroundStation.Routes
                 var mr = m.GetComponent<MeshRenderer>();
                 if (mr != null)
                 {
-                    var sh = Shader.Find("Sprites/Default");
-                    if (sh == null) sh = Shader.Find("Unlit/Color");
-                    mr.material = new Material(sh) { color = new Color(0.35f, 0.92f, 1f, 1f) };
+                    // Tum tutamaclar ayni renk: TEK paylasilan materyal (marker basina leak yok).
+                    if (_markerMaterial == null)
+                    {
+                        var sh = Shader.Find("Sprites/Default");
+                        if (sh == null) sh = Shader.Find("Unlit/Color");
+                        _markerMaterial = new Material(sh) { color = new Color(0.35f, 0.92f, 1f, 1f) };
+                    }
+                    mr.sharedMaterial = _markerMaterial;
                     mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     mr.receiveShadows = false;
                 }
@@ -562,6 +589,11 @@ namespace GroundStation.Routes
             if (!showRuntimeDebugStatus) return;
             if (_debugText == null) EnsureDebugStatusText();
             if (_debugText == null) return;
+
+            // Dirty-flag: durum degismedikce her frame string uretme (GC churn onleme).
+            string key = (_isSelecting ? "1" : "0") + _mode + _polygonPoints.Count + _lastStatus;
+            if (key == _lastShownDebug) return;
+            _lastShownDebug = key;
 
             var sb = new StringBuilder(200);
             sb.Append("Survey Select | ");

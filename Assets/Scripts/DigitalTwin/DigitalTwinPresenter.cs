@@ -669,8 +669,8 @@ namespace GroundStation.DigitalTwin
         private static void EnsureStatusHeader(RectTransform panelRt)
         {
             if (panelRt == null) return;
-            EnsureHeaderLine(panelRt, "TwinStatusTitle", "Digital Twin Status", new Vector2(12f, -8f), 18, FontStyle.Bold, new Color(0.92f, 0.95f, 1f, 1f));
-            EnsureHeaderLine(panelRt, "TwinStatusBadge", "Twin Active", new Vector2(12f, -32f), 14, FontStyle.Bold, new Color(0.55f, 1f, 0.55f, 1f));
+            EnsureHeaderLine(panelRt, "TwinStatusTitle", "Dijital İkiz Durumu", new Vector2(12f, -8f), 18, FontStyle.Bold, new Color(0.92f, 0.95f, 1f, 1f));
+            EnsureHeaderLine(panelRt, "TwinStatusBadge", "İkiz Aktif", new Vector2(12f, -32f), 14, FontStyle.Bold, new Color(0.55f, 1f, 0.55f, 1f));
         }
 
         private static void EnsureHeaderLine(RectTransform parent, string objectName, string label, Vector2 anchoredPos, int fontSize, FontStyle style, Color color)

@@ -83,7 +83,7 @@ namespace GroundStation.DigitalTwin
 
             float w = 356f, h = 268f;
             Vector2 def = new Vector2((TwinHudTheme.ScreenW - w) * 0.5f, (TwinHudTheme.ScreenH - h) * 0.5f - 40f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_summary");
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_summary_v2");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;

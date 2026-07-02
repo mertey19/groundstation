@@ -62,8 +62,9 @@ namespace GroundStation.DigitalTwin
             TwinHudTheme.BeginScaledHud();
 
             float w = 300f, h = 236f;
-            Vector2 def = new Vector2(TwinHudTheme.ScreenW - w - 16f, 16f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_safety");
+            // Sag sutun #1 (zoom +/- butonlarinin altinda).
+            Vector2 def = new Vector2(TwinHudTheme.ScreenW - w - 16f, 120f);
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_safety_v2");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 14f, y = r.y + 12f;

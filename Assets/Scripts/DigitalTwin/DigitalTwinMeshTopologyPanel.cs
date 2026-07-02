@@ -50,8 +50,9 @@ namespace GroundStation.DigitalTwin
 
             TwinHudTheme.BeginScaledHud();
             float w = panelSize.x, h = panelSize.y;
-            Vector2 def = new Vector2(16f, TwinHudTheme.ScreenH - h - 116f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_mesh");
+            // Sol sutun #2 (yorungenin hemen altinda).
+            Vector2 def = new Vector2(16f, 362f);
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_mesh_v2");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;

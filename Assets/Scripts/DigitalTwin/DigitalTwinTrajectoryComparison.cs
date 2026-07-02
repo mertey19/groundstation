@@ -295,7 +295,7 @@ namespace GroundStation.DigitalTwin
         {
             if (!showHud || (!_hasGps && !_hasSlam)) return;
             float s = TwinHudTheme.BeginScaledHud();
-            float w = 282f, h = 186f;
+            float w = TwinHudTheme.LeftPanelWidth, h = 186f;
             // Sol kolon istifi: alt alta otomatik dizilir, cakismaz.
             Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_traj_v4");
             TwinHudTheme.Panel(r);

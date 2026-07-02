@@ -43,7 +43,7 @@ namespace GroundStation.DigitalTwin
 
             TwinHudTheme.BeginScaledHud();
             int rows = Mathf.Min(maxRows, Mathf.Max(1, _targets.Count));
-            float w = 300f, h = 64f + rows * 22f;
+            float w = TwinHudTheme.RightPanelWidth, h = 64f + rows * 22f;
             Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Right, w, h, "twinhud_targets_v4");
             TwinHudTheme.Panel(r);
 

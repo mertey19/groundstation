@@ -50,7 +50,7 @@ namespace GroundStation.DigitalTwin
             if (!showHud) return;
             TwinHudTheme.BeginScaledHud();
 
-            float w = 300f, h = 238f;
+            float w = TwinHudTheme.RightPanelWidth, h = 238f;
             Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Right, w, h, "twinhud_cam_v4");
             TwinHudTheme.Panel(r);
 

@@ -15,7 +15,6 @@ namespace GroundStation.DigitalTwin
         [SerializeField] private DigitalTwinRemoteState remoteState;
         [SerializeField] private DigitalTwinMissionEngine missionEngine;
         [SerializeField] private bool showWhenNoData = true;
-        [SerializeField] private Vector2 panelSize = new Vector2(286f, 268f);
 
         private Vector2 _hudPos = new Vector2(-99999f, 0f);
         private bool _drag;
@@ -49,7 +48,7 @@ namespace GroundStation.DigitalTwin
             if (mesh == null && !showWhenNoData) return;
 
             TwinHudTheme.BeginScaledHud();
-            float w = panelSize.x, h = panelSize.y;
+            float w = TwinHudTheme.LeftPanelWidth, h = 268f;
             Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_mesh_v4");
             TwinHudTheme.Panel(r);
 

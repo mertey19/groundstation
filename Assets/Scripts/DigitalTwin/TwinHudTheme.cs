@@ -91,7 +91,11 @@ namespace GroundStation.DigitalTwin
         public enum HudColumn { Free, Left, Right }
 
         public static float LeftColumnStartY = 195f;    // sol ust telemetrinin alti
-        public static float RightColumnStartY = 130f;   // zoom +/- butonlarinin alti
+        public static float RightColumnStartY = 130f;   // sag ust kontrol butonlarinin alti
+
+        // Kolon panel genislikleri — tum paneller ayni kolonda AYNI genislikte hizalanir.
+        public const float LeftPanelWidth = 296f;
+        public const float RightPanelWidth = 300f;
         private const float StackGap = 8f;
 
         private static int _stackFrame = -1;

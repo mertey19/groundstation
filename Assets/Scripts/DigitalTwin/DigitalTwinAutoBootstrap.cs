@@ -56,6 +56,7 @@ namespace GroundStation.DigitalTwin
             EnsureSingleton<DigitalTwinCommandEgress>("DigitalTwinCommandEgress");
             EnsureSingleton<DigitalTwinQrGalleryPanel>("DigitalTwinQrGalleryPanel");
             EnsureSingleton<DigitalTwinRoverRouteView>("DigitalTwinRoverRouteView");
+            EnsureSingleton<GroundStation.UI.BottomLeftUiCompactor>("BottomLeftUiCompactor");
         }
 
         private static void EnsureSingleton<T>(string objectName) where T : Component

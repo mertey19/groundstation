@@ -73,7 +73,9 @@ namespace GroundStation.DigitalTwin
             float w = 16f * 2f + cols * thumbW + (cols - 1) * pad;
             float h = 58f + rows * (thumbH + 18f + pad);
 
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_gallery_v4");
+            // Sol ALT kose (eski Yukseklik panelinin yeri) — kolon istifinden bagimsiz.
+            Vector2 def = new Vector2(16f, TwinHudTheme.ScreenH - h - 10f);
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_gallery_v5");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;

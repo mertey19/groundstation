@@ -28,7 +28,11 @@ namespace GroundStation.DigitalTwin
         // --- Cozunurluk olcekleme (4K / projektor okunabilirligi) ---
         // Paneller 1080p "sanal" koordinatlarda cizilir; GUI.matrix hem cizimi hem
         // IMGUI girdisini olcekler. Panel konumlamada Screen.width yerine ScreenW kullan.
-        public static float UiScale => Mathf.Max(1f, Screen.height / 1080f);
+
+        /// <summary>Genel HUD kompaktligi: 1 = tam boy, 0.85 = %15 kucuk paneller (yazilar dahil).</summary>
+        public static float HudCompactScale = 0.85f;
+
+        public static float UiScale => Mathf.Max(1f, Screen.height / 1080f) * Mathf.Clamp(HudCompactScale, 0.6f, 1.2f);
         public static float ScreenW => Screen.width / UiScale;
         public static float ScreenH => Screen.height / UiScale;
 
@@ -37,7 +41,7 @@ namespace GroundStation.DigitalTwin
         {
             _savedMatrix = GUI.matrix;
             float s = UiScale;
-            if (s > 1.001f)
+            if (Mathf.Abs(s - 1f) > 0.001f)
                 GUI.matrix = Matrix4x4.Scale(new Vector3(s, s, 1f)) * _savedMatrix;
             return s;
         }

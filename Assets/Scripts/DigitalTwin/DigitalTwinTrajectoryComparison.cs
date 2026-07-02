@@ -297,8 +297,8 @@ namespace GroundStation.DigitalTwin
             float s = TwinHudTheme.BeginScaledHud();
             float w = 282f, h = 190f;
             // Sol sutun #1 (telemetrinin altinda). Anahtar v2: eski cakisan kayitli konumlari sifirlar.
-            Vector2 def = new Vector2(16f, 164f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_traj_v2");
+            Vector2 def = new Vector2(16f, 195f);
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_traj_v3");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;

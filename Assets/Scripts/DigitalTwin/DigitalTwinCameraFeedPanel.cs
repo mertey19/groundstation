@@ -52,8 +52,8 @@ namespace GroundStation.DigitalTwin
 
             float w = 300f, h = 238f;
             // Sag sutun #2 (ucus guvenliginin altinda).
-            Vector2 def = new Vector2(TwinHudTheme.ScreenW - w - 16f, 362f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_cam_v2");
+            Vector2 def = new Vector2(TwinHudTheme.ScreenW - w - 16f, 374f);
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_cam_v3");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 14f, y = r.y + 12f;

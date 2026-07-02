@@ -45,8 +45,8 @@ namespace GroundStation.DigitalTwin
             int rows = Mathf.Min(maxRows, Mathf.Max(1, _targets.Count));
             float w = 300f, h = 64f + rows * 22f;
             // Sag sutun #3 (kameranin altinda).
-            Vector2 def = new Vector2(TwinHudTheme.ScreenW - w - 16f, 606f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_targets_v2");
+            Vector2 def = new Vector2(TwinHudTheme.ScreenW - w - 16f, 620f);
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_targets_v3");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 14f, y = r.y + 12f;

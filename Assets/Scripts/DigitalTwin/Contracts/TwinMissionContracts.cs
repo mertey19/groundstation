@@ -5,8 +5,10 @@ namespace GroundStation.DigitalTwin
     [Serializable]
     public class TwinSlamPoseBlock
     {
-        public float latitude;
-        public float longitude;
+        // TwinPoseBlock ile ayni gerekce: SLAM kestirimi metre alti farklari tasir,
+        // float lat/lon bu farki sifirlar. Bkz. DigitalTwinJsonSchema.TwinPoseBlock.
+        public double latitude;
+        public double longitude;
         public float altitudeM;
         public float yawDeg;
         public float pitchDeg;

@@ -176,8 +176,11 @@ namespace GroundStation.DigitalTwin
     [Serializable]
     public class TwinPoseBlock
     {
-        public float latitude;
-        public float longitude;
+        // DIKKAT: lat/lon double olmali. float32 ~7 anlamli haneye duser; 39.87 enleminde
+        // bu ~1.1 m kuantizasyon demektir ve SLAM/GT sapmasi (tipik 0.05-0.5 m) tamamen
+        // yok olur, izler merdiven gibi kirilir. Yorunge karsilastirmasi bu hassasiyete bagli.
+        public double latitude;
+        public double longitude;
         public float altitudeM;
         public float yawDeg;
         public float pitchDeg;

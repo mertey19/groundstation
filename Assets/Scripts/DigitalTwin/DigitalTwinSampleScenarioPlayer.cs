@@ -393,13 +393,13 @@ namespace GroundStation.DigitalTwin
 
             if (msg != null && msg.pose != null)
             {
-                center = new Vector2(msg.pose.latitude, msg.pose.longitude);
+                center = new Vector2((float)msg.pose.latitude, (float)msg.pose.longitude);
                 return true;
             }
 
             if (msg != null && msg.slamPose != null)
             {
-                center = new Vector2(msg.slamPose.latitude, msg.slamPose.longitude);
+                center = new Vector2((float)msg.slamPose.latitude, (float)msg.slamPose.longitude);
                 return true;
             }
 

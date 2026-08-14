@@ -4,5 +4,8 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/deneme.unity
+    guid: 70c5e1a3b57e7df4f9a92489f911f8e9
   m_configObjects: {}

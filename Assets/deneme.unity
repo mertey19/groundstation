@@ -5150,6 +5150,7 @@ MonoBehaviour:
   remoteState: {fileID: 0}
   missionEngine: {fileID: 0}
   imageryService: {fileID: 0}
+  roverRouteView: {fileID: 0}
   applyYaw: 1
   applyPitchRoll: 0
   smoothPoseUpdates: 1
@@ -5164,6 +5165,7 @@ MonoBehaviour:
   expectedAuthToken: simurgh-2026
   clearJsonTelemetryWhenStale: 1
   jsonTelemetryTimeoutSeconds: 2.5
+  sourceResetTimeoutSeconds: 10
 --- !u!4 &872469371
 Transform:
   m_ObjectHideFlags: 0
@@ -5922,9 +5924,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   remoteState: {fileID: 0}
-  corner: 2
-  panelSize: {x: 338, y: 258}
-  margin: {x: 16, y: 16}
+  missionEngine: {fileID: 0}
   showWhenNoData: 1
 --- !u!4 &1073276680
 Transform:
@@ -8273,10 +8273,16 @@ MonoBehaviour:
   poseBridge: {fileID: 0}
   maxPoints: 800
   minStepMeters: 0.4
-  lineWidth: 2.4
-  yOffset: 3
+  lineWidthMeters: 0.6
+  slamWidthFactor: 0.5
+  minScreenPixels: 3.5
+  heightOffsetMeters: 4
+  followTerrain: 0
   gpsColor: {r: 0.18, g: 0.55, b: 1, a: 1}
   slamColor: {r: 1, g: 0.55, b: 0.12, a: 1}
+  maxPairAgeSeconds: 0.35
+  maxRecords: 6000
+  lowConfidenceThreshold: 0.6
   showHud: 1
 --- !u!4 &1690687358
 Transform:
@@ -8285,6 +8291,70 @@ Transform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1690687356}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1741978556
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1741978558}
+  - component: {fileID: 1741978557}
+  m_Layer: 0
+  m_Name: DigitalTwinTrajectoryDatasetPlayer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1741978557
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1741978556}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9956a2a87974a134fb66d8433e9790d3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  groundTruthFile: SlamDataset/MH01_GT.txt
+  slamFile: SlamDataset/MH01_SLAM_sim.txt
+  groundTruthAsset: {fileID: 0}
+  slamAsset: {fileID: 0}
+  anchorLatLon: {x: 0, y: 0}
+  worldScale: 1
+  altitudeOffsetM: 30
+  zIsUp: 1
+  bridge: {fileID: 0}
+  playOnStart: 0
+  speed: 1
+  maxMessagesPerSecond: 20
+  loop: 0
+  alignSlamToGroundTruth: 1
+  maxAssociationDt: 0.05
+  moveMapToAnchorOnStart: 1
+  sourceId: dataset-player
+  authToken: simurgh-2026
+  vehicleType: uav
+  missionPhase: scan
+--- !u!4 &1741978558
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1741978556}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -10438,3 +10508,4 @@ SceneRoots:
   - {fileID: 1690687358}
   - {fileID: 1073276680}
   - {fileID: 1235233731}
+  - {fileID: 1741978558}

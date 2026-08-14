@@ -26,7 +26,9 @@ namespace GroundStation.DigitalTwin
         [SerializeField] private DigitalTwinJsonPoseBridge poseBridge;
 
         [Header("Iz ayarlari")]
-        [SerializeField] private int maxPoints = 2000;
+        [Tooltip("Izde tutulan en fazla kose sayisi. Dolunca en eski %10 atilir; uzun " +
+                 "ucuslarda izin basi silinmesin diye genis tutuldu.")]
+        [SerializeField] private int maxPoints = 5000;
         [Tooltip("Bu mesafeden yakin ardisik noktalar yeni koseye donusmez (metre). " +
                  "EuRoC/ORB-SLAM3 veri kumeleri oda olcegindedir (10-30 m); 0.4 m gibi bir esik " +
                  "izi merdivene cevirir, bu yuzden varsayilan 0.1 m.")]
@@ -40,6 +42,10 @@ namespace GroundStation.DigitalTwin
                  "turuncu, mavinin icinde serit olarak gorunur ve gercek konum kaybolmaz.")]
         [Range(0.2f, 1f)]
         [SerializeField] private float slamWidthFactor = 0.5f;
+        [Tooltip("Iz ekranda en az bu kadar piksel kalinlikta cizilir. Metre karsiligi bundan " +
+                 "inceyse bu taban kullanilir; boylece saha olcegine zoom yapildiginda iz " +
+                 "kaybolmaz, yakinlasinca da gereksiz kalinlasmaz. 0 = kapali.")]
+        [SerializeField] private float minScreenPixels = 3.5f;
         [Tooltip("Izin zeminden yuksekligi (metre).")]
         [SerializeField] private float heightOffsetMeters = 4f;
         [Tooltip("Acikken iz arazi yuksekligini takip eder. Tile'lar yuklenirken sorgulanan " +
@@ -47,6 +53,10 @@ namespace GroundStation.DigitalTwin
         [SerializeField] private bool followTerrain;
         [SerializeField] private Color gpsColor = new Color(0.18f, 0.55f, 1f, 1f);
         [SerializeField] private Color slamColor = new Color(1f, 0.55f, 0.12f, 1f);
+
+        [Tooltip("Gercek konum ve SLAM olcumu bu sureden fazla ayri zamanlara aitse sapma " +
+                 "ornegi alinmaz (izleme kaybinda donmus SLAM pozu RMSE'yi sisiriyordu).")]
+        [SerializeField] private float maxPairAgeSeconds = 0.35f;
 
         [Header("Kayit")]
         [Tooltip("CSV disa aktarim icin tutulan maksimum ornek sayisi.")]
@@ -74,6 +84,14 @@ namespace GroundStation.DigitalTwin
         private Vector2d _lastGpsVertex, _lastSlamVertex; // ize en son eklenen vertex
         private float _unitsPerMeter = 1f;               // harita olcegi (RefreshScale)
         private bool _scaleResolved;                     // olcek haritadan gercekten olculdu mu
+        private bool _rebuildPending;                    // rebuild bos dondu, tekrar denenecek
+        private Vector3 _lastRootPos;                    // harita kokunun son konumu
+        private Vector2d _lastCenter;                    // haritanin son merkezi
+        private float _lastZoom = -1f;                   // haritanin son zoom degeri
+        private float _lastGpsAt, _lastSlamAt;           // olcumlerin geldigi anlar
+        private Camera _camera;
+        private DigitalTwinTrajectoryDatasetPlayer _datasetPlayer;
+        private float _nextPlayerLookup;
         private float _devNow, _devMax, _devSum;
         private double _devSqSum;
         private int _devN;
@@ -181,6 +199,7 @@ namespace GroundStation.DigitalTwin
         private void HandleGps(Vector2d latlon)
         {
             _lastGps = latlon; _hasGps = true;   // sapma hesabi her zaman EN SON konumu kullanir
+            _lastGpsAt = Time.unscaledTime;
             int change = AppendPoint(_gps, latlon, ref _lastGpsVertex, ref _hasGpsVertex);
             if (change == 1) AppendVertex(_gpsLine, latlon);
             else if (change == 2) RebuildLine(_gpsLine, _gps);
@@ -190,6 +209,7 @@ namespace GroundStation.DigitalTwin
         private void HandleSlam(Vector2d latlon)
         {
             _lastSlam = latlon; _hasSlam = true;
+            _lastSlamAt = Time.unscaledTime;
             int change = AppendPoint(_slam, latlon, ref _lastSlamVertex, ref _hasSlamVertex);
             if (change == 1) AppendVertex(_slamLine, latlon);
             else if (change == 2) RebuildLine(_slamLine, _slam);
@@ -221,6 +241,11 @@ namespace GroundStation.DigitalTwin
         private void UpdateDeviation()
         {
             if (!_hasGps || !_hasSlam) return;
+            // SLAM izleme kaybindayken son SLAM pozu DONAR; arac ilerlemeye devam ettigi
+            // icin aradaki mesafe "sapma" gibi birikir ve RMSE'yi sisirir (MH01'de 0.21 m
+            // yerine 0.54 m, maks 18 m). Iki olcum ayni ana ait degilse ornek alinmaz.
+            if (maxPairAgeSeconds > 0f && Mathf.Abs(_lastGpsAt - _lastSlamAt) > maxPairAgeSeconds)
+                return;
             _devNow = (float)HaversineMeters(_lastGps, _lastSlam);
             if (_devNow > _devMax) _devMax = _devNow;
             _devSum += _devNow;
@@ -287,7 +312,13 @@ namespace GroundStation.DigitalTwin
             lr.textureMode = LineTextureMode.Stretch;
             lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             lr.receiveShadows = false;
-            var shader = Shader.Find("Sprites/Default");
+            // Iz her seyin ustunde cizilir: Mapbox arazisi (yukseklik abartmali) ve
+            // extrude binalar harita duzleminin cok uzerine ciktigi icin normal derinlik
+            // testiyle iz zeminin altinda kalip gorunmez oluyordu. Shader Resources'tan
+            // yuklenir; yalniz Shader.Find ile bulunanlar bagimsiz surume dahil edilmez.
+            var shader = Resources.Load<Shader>("TrajectoryOverlay");
+            if (shader == null) shader = Shader.Find("Simurgh/TrajectoryOverlay");
+            if (shader == null) shader = Shader.Find("Sprites/Default");
             if (shader == null) shader = Shader.Find("Unlit/Color");
             lr.material = new Material(shader);
             lr.startColor = color; lr.endColor = color;
@@ -325,13 +356,20 @@ namespace GroundStation.DigitalTwin
                 try { w = abstractMap.GeoToWorldPosition(pts[i], followTerrain); }
                 catch { continue; }
                 // SLAM izi bir tik yukarida: ayni yukseklikte z-fighting olur ve izler
-            // birbirini kesik kesik ortelerdi.
-            w.y += (heightOffsetMeters + (lr == _slamLine ? 0.25f : 0f)) * _unitsPerMeter;
+                // birbirini kesik kesik ortelerdi.
+                w.y += (heightOffsetMeters + (lr == _slamLine ? 0.25f : 0f)) * _unitsPerMeter;
                 valid.Add(w);
             }
+            // Harita yeniden yuklenirken GeoToWorldPosition gecici olarak hata verebilir.
+            // Bos listeyi yazmak izi TAMAMEN siler ("cizgi olusuyor sonra kayboluyor");
+            // bunun yerine eldeki geometriyi koru ve sonraki karede tekrar dene.
+            if (valid.Count == 0)
+            {
+                if (pts.Count > 0) _rebuildPending = true;
+                return;
+            }
             lr.positionCount = valid.Count;
-            if (valid.Count > 0)
-                lr.SetPositions(valid.ToArray());
+            lr.SetPositions(valid.ToArray());
         }
 
         private void RedrawAll()
@@ -351,11 +389,79 @@ namespace GroundStation.DigitalTwin
             return 2 * R * Math.Asin(Math.Min(1.0, Math.Sqrt(h)));
         }
 
+        private void LateUpdate()
+        {
+            if (_gpsLine == null || _slamLine == null) return;
+
+            // 1) Harita kaydi/zoom'u kok transformu veya merkezi degistirdiyse izleri
+            //    yeni dunya koordinatlarina tasi. Yalniz OnMapRedrawn'a guvenmek yetmiyor:
+            //    kaydirmada iz haritayla birlikte gelmeyip ekrandan kayabiliyordu.
+            if (abstractMap != null && abstractMap.Root != null)
+            {
+                Vector3 root = abstractMap.Root.position;
+                var center = abstractMap.CenterLatitudeLongitude;
+                // Zoom da izlenir: harita olcegi degistiginde iz eski olcekte kalirsa
+                // haritayla uyumsuz (kucucuk ya da devasa) gorunuyordu.
+                float zoom = abstractMap.Zoom;
+                if (_rebuildPending ||
+                    (root - _lastRootPos).sqrMagnitude > 0.0001f ||
+                    Mathf.Abs(zoom - _lastZoom) > 0.0001f ||
+                    Math.Abs(center.x - _lastCenter.x) > 1e-9 ||
+                    Math.Abs(center.y - _lastCenter.y) > 1e-9)
+                {
+                    _lastRootPos = root;
+                    _lastCenter = center;
+                    _lastZoom = zoom;
+                    _rebuildPending = false;
+                    _scaleResolved = false;   // metre -> dunya birimi olcegi yeniden olculsun
+                    RedrawAll();
+                }
+            }
+
+            // 2) Kalinlik: metre karsiligi ile ekranda en az minScreenPixels piksel olacak
+            //    degerin buyugu. Sabit metre kalinligi, saha olcegine bakan kamerada izi
+            //    sac teline cevirdigi icin gorunmez oluyordu.
+            float width = Mathf.Max(0.01f, lineWidthMeters * _unitsPerMeter);
+            var cam = _camera != null ? _camera : (_camera = Camera.main ?? FindObjectOfType<Camera>());
+            if (cam != null && minScreenPixels > 0f)
+            {
+                Vector3 reference = _gpsLine.positionCount > 0
+                    ? _gpsLine.GetPosition(_gpsLine.positionCount - 1)
+                    : transform.position;
+                float unitsPerPixel = cam.orthographic
+                    ? 2f * cam.orthographicSize / Mathf.Max(1, cam.pixelHeight)
+                    : 2f * Vector3.Distance(cam.transform.position, reference)
+                        * Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad) / Mathf.Max(1, cam.pixelHeight);
+                width = Mathf.Max(width, minScreenPixels * unitsPerPixel);
+            }
+            _gpsLine.widthMultiplier = width;
+            _slamLine.widthMultiplier = width * Mathf.Clamp(slamWidthFactor, 0.2f, 1f);
+        }
+
+        /// <summary>
+        /// Sahnedeki veri kumesi oynaticisi (varsa). FindObjectOfType her karede pahali
+        /// oldugu icin sonuc onbelleklenir ve yalnizca birkac saniyede bir tazelenir.
+        /// </summary>
+        private DigitalTwinTrajectoryDatasetPlayer ResolveDatasetPlayer()
+        {
+            if (_datasetPlayer == null && Time.unscaledTime >= _nextPlayerLookup)
+            {
+                _nextPlayerLookup = Time.unscaledTime + 2f;
+                _datasetPlayer = FindObjectOfType<DigitalTwinTrajectoryDatasetPlayer>();
+            }
+            return _datasetPlayer;
+        }
+
         private void OnGUI()
         {
-            if (!showHud || (!_hasGps && !_hasSlam)) return;
+            if (!showHud) return;
+            // Veri gelmemis olsa bile, sahnede veri kumesi oynaticisi varsa panel gorunur:
+            // bagimsiz surumde operatorun demoyu baslatabilecegi tek yer burasi.
+            var demoPlayer = ResolveDatasetPlayer();
+            if (!_hasGps && !_hasSlam && demoPlayer == null) return;
+
             float s = TwinHudTheme.BeginScaledHud();
-            float w = TwinHudTheme.LeftPanelWidth, h = 186f;
+            float w = TwinHudTheme.LeftPanelWidth, h = 204f + (demoPlayer != null ? 26f : 0f);
             // Sol kolon istifi: alt alta otomatik dizilir, cakismaz.
             Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_traj_v4");
             TwinHudTheme.Panel(r);
@@ -370,7 +476,16 @@ namespace GroundStation.DigitalTwin
             GUI.Label(new Rect(x + 18f, y, 100f, 16f), "Gerçek konum", TwinHudTheme.Small);
             TwinHudTheme.Dot(new Rect(x + 120f, y + 2f, 11f, 11f), slamColor);
             GUI.Label(new Rect(x + 138f, y, 134f, 16f), "SLAM kestirimi", TwinHudTheme.Small);
-            y += 22f;
+            y += 18f;
+
+            // Iz koselerinin sayisi: cizgi gorunmuyorsa sorunun veri tarafinda mi
+            // (nokta birikmiyor) yoksa cizim tarafinda mi oldugunu tek bakista ayirir.
+            GUI.Label(new Rect(x, y, w - 32f, 16f),
+                string.Format(CultureInfo.InvariantCulture, "iz noktasi: {0} gerçek · {1} SLAM",
+                    _gpsLine != null ? _gpsLine.positionCount : 0,
+                    _slamLine != null ? _slamLine.positionCount : 0),
+                TwinHudTheme.Small);
+            y += 18f;
 
             // Aktif konum kaynagi rozeti (GPS kaybi senaryosu kaniti).
             var src = poseBridge != null ? poseBridge.ActivePoseSource : DigitalTwinJsonPoseBridge.TwinPoseSource.None;
@@ -412,6 +527,21 @@ namespace GroundStation.DigitalTwin
                 ClearTrajectories();
             if (!string.IsNullOrEmpty(_savedPath) && Time.unscaledTime < _savedPathUntil)
                 GUI.Label(new Rect(x + 190f, y + 2f, w - 218f, 16f), "kaydedildi ✓", TwinHudTheme.Small);
+            y += 24f;
+
+            // Bagimsiz surumde ornek veri kumesini (EuRoC MH01) oynatmak icin tek dugme.
+            // Canli veriyle cakismasin diye kendiliginden BASLAMAZ; operator baslatir.
+            if (demoPlayer != null)
+            {
+                bool running = demoPlayer.IsPlaying;
+                if (GUI.Button(new Rect(x, y, 150f, 20f), running ? "Demoyu durdur" : "Demo veriyi oynat", TwinHudTheme.Button))
+                {
+                    if (running) demoPlayer.StopPlayback();
+                    else { ClearTrajectories(); demoPlayer.BeginPlayback(); }
+                }
+                if (running)
+                    GUI.Label(new Rect(x + 158f, y + 2f, w - 186f, 16f), "EuRoC MH01 oynatiliyor", TwinHudTheme.Small);
+            }
 
             TwinHudTheme.EndScaledHud();
         }

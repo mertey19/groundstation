@@ -337,19 +337,32 @@ namespace GroundStation.DigitalTwin
                 MaxMilliseconds = 80
             };
             var geofence = FindObjectOfType<DigitalTwinGeofence>();
+            int fenceRevision = geofence != null ? geofence.Revision : 0;
             if (geofence != null && geofence.HasCenter)
             {
-                if (!GeoFrames.TryWgs84ToEnu(origin.x, origin.y, geofence.CenterLatitude, geofence.CenterLongitude, out double fenceE, out double fenceN))
+                if (!geofence.TryGetCircle(out double fenceLat, out double fenceLon, out float fenceRadius))
+                    return FailRoverPlan(generation, "Saha sınırı geçersiz");
+                if (!GeoFrames.TryWgs84ToEnu(origin.x, origin.y, fenceLat, fenceLon, out double fenceE, out double fenceN))
                     return FailRoverPlan(generation, "Saha sınırı dönüşümü geçersiz");
-                double r = geofence.RadiusMeters;
-                request.BoundsMinEast = fenceE - r;
-                request.BoundsMaxEast = fenceE + r;
-                request.BoundsMinNorth = fenceN - r;
-                request.BoundsMaxNorth = fenceN + r;
+                double allowed = RoverLocalPlanner.EffectiveCircleRadius(fenceRadius, request.RoverRadiusM, request.SafetyMarginM);
+                if (!DigitalTwinMessageValidation.Finite(allowed) || allowed <= 0)
+                    return FailRoverPlan(generation, "Etkin saha yarıçapı geçersiz");
+                request.CircleConfigured = true;
+                request.CircleEast = fenceE;
+                request.CircleNorth = fenceN;
+                request.CircleRadiusM = allowed;
+                request.FenceRevision = fenceRevision;
+                // Bounding box only clips the A* search window; clearance uses the circle.
+                request.BoundsMinEast = fenceE - fenceRadius;
+                request.BoundsMaxEast = fenceE + fenceRadius;
+                request.BoundsMinNorth = fenceN - fenceRadius;
+                request.BoundsMaxNorth = fenceN + fenceRadius;
             }
 
             var plan = RoverLocalPlanner.Plan(request);
             if (generation != _mapGeneration) return false;
+            if (geofence != null && geofence.Revision != fenceRevision)
+                return FailRoverPlan(generation, "Saha sınırı planlama sırasında değişti");
             LastRoverPlan = plan;
             _lastRoverDetour.Clear();
             if (!plan.Success || plan.Path == null || plan.Path.Length < 2)

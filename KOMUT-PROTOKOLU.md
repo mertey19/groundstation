@@ -56,20 +56,30 @@ Onay, yer istasyonunun **19090** dinleme portuna gönderilir; komutun geçici g�
 
 `accepted` yalnızca alındığını; `applied` uçuş kontrolcüsünde uygulandığını; `rejected` reddedildiğini ifade eder. Yer istasyonu IP, araç, kaynak, token, komut kimliği ve onay zamanını denetler. On saniye içinde uygulama sonucu gelmezse sonuç **bilinmiyor** gösterilir. Gönderim en çok üç kez, aynı kimlik ve aynı içerikle denenir; `accepted` geldikten sonra yeniden gönderim durur. Alıcı `commandId` için tekrarları ayıklamalı, aynı komutu yeniden uygulamadan önceki sonucu döndürmelidir.
 
-Rota yüklemesi `applied` olmadan `start_mission` gönderilmez. Yerel rota, yüklenen içerikle aynı parmak izine sahip değilse geç gelen `applied` onayı görevi başlatmaz. Bekle/RTL/acil dur, mod değişikliği, kaynak/oturum değişimi veya planı temizleme bekleyen başlatma zincirini iptal eder; geç gelen rota onayı görevi yeniden başlatmaz. İptal, araca daha önce ulaşmış bir komutun fiziksel olarak geri alındığını ifade etmez.
+Rota yüklemesi `applied` olmadan `start_mission` gönderilmez. Görev karşılaştırması araç/kaynak kimliği, irtifa referansı, waypoint sırası/sayısı, koordinat, irtifa, hız, bekleme ve action alanlarını kapsar; `commandId` ve yeniden gönderim zamanı görev değişikliği sayılmaz. Yerel görev bu anlık görüntüden saparsa — kullanıcı eski değerlere dönse bile — geç gelen `applied` onayı `start_mission` göndermez. `accepted` tek başına başlatmaz. Bekle/RTL/acil dur, timeout, mod değişikliği, kaynak/oturum değişimi veya planı temizleme bekleyen başlatma zincirini iptal eder; geç gelen rota onayı görevi yeniden başlatmaz. İptal, araca daha önce ulaşmış bir komutun fiziksel olarak geri alındığını ifade etmez.
 
 Onay zaman damgası komutun kendi zamanına ve yer istasyonunun `unscaledTime` gecikmesine göre yorumlanır. Komuttan çok eski bir onay yok sayılır; sistem saati sıçraması tek başına zamanında gelen onayı düşürmez.
 
 ## Kayıt dayanıklılığı
 
-`DigitalTwinOperationRecorder` kabul edilen mesajları JSONL dosyasına artımlı yazar. Bellekte en fazla 500 satır tutulur; asıl kayıt disktir. Yaklaşık bir saniyelik flush aralığı vardır. Güç kaybında son flush edilmemiş satır kaybolabilir; önceki tam satırlar okunabilir kalır. `authToken` diske yazılmadan çıkarılır. Oynatma canlı kimlik doğrulamasını gevşetmez; ayrı replay bağlamı kullanır.
+`DigitalTwinOperationRecorder` kabul edilen mesajları JSONL dosyasına artımlı yazar. Bellekte en fazla 500 satır tutulur; asıl kayıt disktir. `StopRecording` yazma kuyruğunu boşaltır ve dosyayı kapatır. `SaveRecording` RAM önizlemesini tam oturum diye yazmaz; aktif kaydı finalize eder veya mevcut oturum yolunu döndürür. Dosya boyutu sınırında oturum sıralı `*_pNNN.jsonl` parçalarına ayrılır ve `*.session.json` bildirimi tek oturum olarak yeniden okunur. Yaklaşık bir saniyelik flush aralığı vardır. Güç kaybında son flush edilmemiş satır kaybolabilir; önceki tam satırlar okunabilir kalır. `authToken` diske yazılmadan çıkarılır. Oynatma canlı kimlik doğrulamasını gevşetmez; ayrı replay bağlamı kullanır.
 
 ## Yerel araç emülatörü
 
-`Tools/VehicleEmulator/vehicle_emulator.py` yalnızca 127.0.0.1 üzerinde dinler. Telemetri üretir, komut sözleşmesini ayrıştırır, `accepted`/`applied`/`rejected` döner, aynı `commandId` tekrarlarını ayıklar ve farklı gövdeyi reddeder. Desteklenmeyen komuta sahte başarı dönmez. Emülatör testi uçuş kontrolcüsü veya donanım entegrasyonu değildir.
+`Tools/VehicleEmulator/vehicle_emulator.py` yalnızca 127.0.0.1 üzerinde dinler. Simüle kaynak kimliği ve `SIM-EMU` kipi gerçek araç gibi gizlenmez. Telemetri üretir, komut sözleşmesini ayrıştırır, `accepted`/`applied`/`rejected` döner, aynı `commandId` tekrarlarını ayıklar ve farklı gövdeyi reddeder. Desteklenmeyen, boş rota, geçersiz hız veya geçersiz zaman damgası `applied` üretmez. Daha önce `rejected` olan kimlik sahte `applied` dönmez. `[]` ve bozuk paket dinleyiciyi düşürmez. Emülatör testi uçuş kontrolcüsü veya donanım entegrasyonu değildir.
+
+Tekrar önbelleği en fazla 4096 komut kimliği tutar; evict FIFO'dur. `applied` yalnızca emülatörün simüle durum değişikliği tamamlandıktan sonra üretilir.
+
+Birim test:
 
 ```text
 python Tools/VehicleEmulator/test_vehicle_emulator.py
+```
+
+Düzenli simüle telemetri (loopback; gerçek araç değildir):
+
+```text
+python Tools/VehicleEmulator/vehicle_emulator.py --host 127.0.0.1 --command-port 19092 --telemetry-port 19090 --telemetry-hz 2 --vehicle uav --source sim-emu-uav --token test-token
 ```
 
 ## SQLite kaynağı

@@ -26,6 +26,9 @@ namespace GroundStation.DigitalTwin
         public double RoverRadiusM = 0.4;
         public double SafetyMarginM = 0.5;
         public double? BoundsMinEast, BoundsMinNorth, BoundsMaxEast, BoundsMaxNorth;
+        public bool CircleConfigured;
+        public double CircleEast, CircleNorth, CircleRadiusM;
+        public int FenceRevision;
         public int MapGeneration;
         public double CellSizeM = 0.5;
         public int MaxCells = 12000;
@@ -41,6 +44,7 @@ namespace GroundStation.DigitalTwin
         public string Error = "";
         public LocalMeterPoint[] Path = Array.Empty<LocalMeterPoint>();
         public int MapGeneration;
+        public int FenceRevision;
     }
 
     /// <summary>
@@ -56,10 +60,22 @@ namespace GroundStation.DigitalTwin
 
         public static RoverPlanResult Plan(RoverPlanRequest request)
         {
-            var result = new RoverPlanResult { MapGeneration = request != null ? request.MapGeneration : 0 };
+            var result = new RoverPlanResult
+            {
+                MapGeneration = request != null ? request.MapGeneration : 0,
+                FenceRevision = request != null ? request.FenceRevision : 0
+            };
             if (request == null) return Fail(result, "Plan isteği yok");
             if (!Finite(request.Start) || !Finite(request.Goal) || request.RoverRadiusM < 0 || request.SafetyMarginM < 0)
                 return Fail(result, "Başlangıç, hedef veya rover boyutu geçersiz");
+            if (request.CircleConfigured)
+            {
+                if (!DigitalTwinMessageValidation.Finite(request.CircleEast) || !DigitalTwinMessageValidation.Finite(request.CircleNorth)
+                    || !DigitalTwinMessageValidation.Finite(request.CircleRadiusM) || request.CircleRadiusM <= 0)
+                    return Fail(result, "Etkin saha yarıçapı geçersiz");
+                if (!PointInCircle(request.Start, request)) return Fail(result, "Başlangıç saha dışında");
+                if (!PointInCircle(request.Goal, request)) return Fail(result, "Hedef saha dışında");
+            }
             var obstacles = request.Obstacles ?? Array.Empty<DiskObstacle>();
             foreach (var o in obstacles)
                 if (!DigitalTwinMessageValidation.Finite(o.East) || !DigitalTwinMessageValidation.Finite(o.North)
@@ -70,7 +86,8 @@ namespace GroundStation.DigitalTwin
             if (Hits(request.Start, obstacles, inflate)) return Fail(result, "Başlangıç şişkin engelin içinde");
             if (Hits(request.Goal, obstacles, inflate)) return Fail(result, "Hedef şişkin engelin içinde");
             if (Clear(request.Start, request.Goal, obstacles, inflate)
-                && InsideBounds(request.Start, request) && InsideBounds(request.Goal, request))
+                && InsideBounds(request.Start, request) && InsideBounds(request.Goal, request)
+                && PathInCircle(new[] { request.Start, request.Goal }, request))
             {
                 result.Success = true;
                 result.Status = RoverPlanStatus.Clear;
@@ -97,7 +114,8 @@ namespace GroundStation.DigitalTwin
                 for (int x = 0; x < width; x++)
                 {
                     double x0 = minE + x * cell, y0 = minN + y * cell;
-                    blocked[y * width + x] = CellHits(x0, y0, cell, obstacles, inflate);
+                    blocked[y * width + x] = CellHits(x0, y0, cell, obstacles, inflate)
+                        || CellOutsideCircle(x0, y0, cell, request);
                 }
 
             if (!TryIndex(request.Start, minE, minN, cell, width, height, blocked, out int start)
@@ -145,13 +163,31 @@ namespace GroundStation.DigitalTwin
             if (cells.Count == 0) return Fail(result, "Geçerli rover rotası bulunamadı");
             cells[0] = request.Start;
             cells[cells.Count - 1] = request.Goal;
-            if (!PathClear(cells, obstacles, inflate)) return Fail(result, "Izgara yolu sadeleştirme öncesi çarpışıyor");
-            var pulled = StringPull(cells, obstacles, inflate);
-            if (!PathClear(pulled, obstacles, inflate)) pulled = cells;
+            if (!PathClear(cells, obstacles, inflate) || !PathInCircle(cells, request))
+                return Fail(result, "Izgara yolu sadeleştirme öncesi çarpışıyor veya saha dışında");
+            var pulled = StringPull(cells, obstacles, inflate, request);
+            if (!PathClear(pulled, obstacles, inflate) || !PathInCircle(pulled, request)) pulled = cells;
+            if (!PathClear(pulled, obstacles, inflate) || !PathInCircle(pulled, request))
+                return Fail(result, "Sadeleştirilmiş rota saha dışına çıkıyor");
             result.Success = true;
             result.Status = RoverPlanStatus.Detour;
             result.Path = pulled.ToArray();
             return result;
+        }
+
+        public static double EffectiveCircleRadius(double fenceRadiusM, double roverRadiusM, double safetyMarginM)
+        {
+            if (!DigitalTwinMessageValidation.Finite(fenceRadiusM) || !DigitalTwinMessageValidation.Finite(roverRadiusM)
+                || !DigitalTwinMessageValidation.Finite(safetyMarginM))
+                return double.NaN;
+            return fenceRadiusM - roverRadiusM - safetyMarginM;
+        }
+
+        public static bool PointInCircle(LocalMeterPoint p, double east, double north, double radiusM)
+        {
+            if (!DigitalTwinMessageValidation.Finite(radiusM) || radiusM <= 0) return false;
+            double dx = p.East - east, dy = p.North - north;
+            return dx * dx + dy * dy <= radiusM * radiusM + 1e-9;
         }
 
         public static bool SegmentHits(LocalMeterPoint a, LocalMeterPoint b, DiskObstacle obstacle, double inflate)
@@ -210,6 +246,45 @@ namespace GroundStation.DigitalTwin
                 && p.North >= request.BoundsMinNorth.Value - 1e-6 && p.North <= request.BoundsMaxNorth.Value + 1e-6;
         }
 
+        static bool PointInCircle(LocalMeterPoint p, RoverPlanRequest request)
+        {
+            if (request == null || !request.CircleConfigured) return true;
+            return PointInCircle(p, request.CircleEast, request.CircleNorth, request.CircleRadiusM);
+        }
+
+        public static bool PathInCircle(IList<LocalMeterPoint> path, RoverPlanRequest request)
+        {
+            if (request == null || !request.CircleConfigured) return true;
+            if (path == null || path.Count == 0) return false;
+            for (int i = 0; i < path.Count; i++)
+            {
+                if (!PointInCircle(path[i], request)) return false;
+                if (i > 0 && !SegmentInCircle(path[i - 1], path[i], request)) return false;
+            }
+            return true;
+        }
+
+        static bool SegmentInCircle(LocalMeterPoint a, LocalMeterPoint b, RoverPlanRequest request)
+        {
+            if (!request.CircleConfigured) return true;
+            // A disk is convex, so endpoints inside imply the chord stays inside.
+            // Still reject if either end is out so a bounding box cannot sneak a diagonal through.
+            return PointInCircle(a, request) && PointInCircle(b, request);
+        }
+
+        static bool CellOutsideCircle(double x0, double y0, double cell, RoverPlanRequest request)
+        {
+            if (request == null || !request.CircleConfigured) return false;
+            double r = request.CircleRadiusM;
+            if (r <= 0) return true;
+            // Vehicle-center cell is unsafe if any corner sits outside the allowed circle.
+            if (!PointInCircle(new LocalMeterPoint(x0, y0), request)) return true;
+            if (!PointInCircle(new LocalMeterPoint(x0 + cell, y0), request)) return true;
+            if (!PointInCircle(new LocalMeterPoint(x0, y0 + cell), request)) return true;
+            if (!PointInCircle(new LocalMeterPoint(x0 + cell, y0 + cell), request)) return true;
+            return false;
+        }
+
         static bool TryWorkspace(RoverPlanRequest request, DiskObstacle[] obstacles, double inflate,
             out double minE, out double minN, out double maxE, out double maxN)
         {
@@ -226,6 +301,13 @@ namespace GroundStation.DigitalTwin
                 maxE = Math.Max(maxE, o.East + r);
                 minN = Math.Min(minN, o.North - r);
                 maxN = Math.Max(maxN, o.North + r);
+            }
+            if (request.CircleConfigured)
+            {
+                minE = Math.Max(minE, request.CircleEast - request.CircleRadiusM);
+                maxE = Math.Min(maxE, request.CircleEast + request.CircleRadiusM);
+                minN = Math.Max(minN, request.CircleNorth - request.CircleRadiusM);
+                maxN = Math.Min(maxN, request.CircleNorth + request.CircleRadiusM);
             }
             if (request.BoundsMinEast.HasValue)
             {
@@ -285,7 +367,8 @@ namespace GroundStation.DigitalTwin
             return Math.Sqrt(dx * dx + dy * dy) * cell;
         }
 
-        static List<LocalMeterPoint> StringPull(List<LocalMeterPoint> path, DiskObstacle[] obstacles, double inflate)
+        static List<LocalMeterPoint> StringPull(List<LocalMeterPoint> path, DiskObstacle[] obstacles, double inflate,
+            RoverPlanRequest request)
         {
             var pulled = new List<LocalMeterPoint> { path[0] };
             int i = 0;
@@ -293,7 +376,8 @@ namespace GroundStation.DigitalTwin
             {
                 int best = i + 1;
                 for (int j = path.Count - 1; j > i + 1; j--)
-                    if (Clear(path[i], path[j], obstacles, inflate)) { best = j; break; }
+                    if (Clear(path[i], path[j], obstacles, inflate) && SegmentInCircle(path[i], path[j], request))
+                    { best = j; break; }
                 pulled.Add(path[best]);
                 i = best;
             }

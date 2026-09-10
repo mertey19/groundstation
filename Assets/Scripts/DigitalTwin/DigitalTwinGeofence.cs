@@ -90,8 +90,25 @@ namespace GroundStation.DigitalTwin
         {
             centerLat = lat; centerLon = lon;
             radiusMeters = Mathf.Max(10f, radiusM);
-            HasCenter = true;
+            HasCenter = DigitalTwinMessageValidation.Geo(lat, lon)
+                && DigitalTwinMessageValidation.Finite(radiusMeters) && radiusMeters > 0;
+            Revision++;
             _circleDirty = true;
+        }
+
+        public int Revision { get; private set; }
+
+        /// <summary>
+        /// Returns the configured circular fence. False means not configured or invalid;
+        /// callers must fail closed instead of treating the workspace as unbounded.
+        /// </summary>
+        public bool TryGetCircle(out double lat, out double lon, out float radiusM)
+        {
+            lat = centerLat;
+            lon = centerLon;
+            radiusM = radiusMeters;
+            return HasCenter && DigitalTwinMessageValidation.Geo(centerLat, centerLon)
+                && DigitalTwinMessageValidation.Finite(radiusMeters) && radiusMeters > 0;
         }
 
         private void Update()

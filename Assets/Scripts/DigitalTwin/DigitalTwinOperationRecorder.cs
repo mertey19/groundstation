@@ -13,6 +13,14 @@ namespace GroundStation.DigitalTwin
     {
         [Serializable]
         private class LogEntry { public string type; public long timeMs; public string payload; }
+        [Serializable]
+        private class SessionManifest
+        {
+            public string type;
+            public int version;
+            public string sessionId;
+            public string[] parts;
+        }
         [SerializeField] private DigitalTwinUdpIngress udpIngress;
         [SerializeField] private MonoBehaviour ingressBehaviour;
         [SerializeField] private bool autoRecordOnEnable;
@@ -24,9 +32,12 @@ namespace GroundStation.DigitalTwin
         private readonly List<LogEntry> _entries = new List<LogEntry>();
         private readonly List<LogEntry> _playback = new List<LogEntry>();
         private readonly ConcurrentQueue<string> _writeQueue = new ConcurrentQueue<string>();
+        private readonly List<string> _parts = new List<string>();
         private DigitalTwinJsonPoseBridge _bridge;
         private bool _recording;
         private string _lastSavedPath = "";
+        private string _sessionManifestPath = "";
+        private string _sessionId = "";
         private int _cursor;
         private long _origin;
         private float _startedAt;
@@ -37,13 +48,20 @@ namespace GroundStation.DigitalTwin
         private volatile string _ioError = "";
         private long _bytesWritten;
         private int _dropped;
+        private int _sessionRecordCount;
+        private int _partIndex;
         public int ReplayApplied { get; private set; }
         public int ReplayRejected { get; private set; }
         public bool IsReplaying { get; private set; }
+        public bool IsRecording => _recording;
         public string LastReplayInfo { get; private set; } = "";
         public string LastSavedPath => _lastSavedPath;
+        public string SessionManifestPath => _sessionManifestPath;
         public int DroppedRecordCount => _dropped;
         public string LastIoError => _ioError;
+        public int SessionRecordCount => _sessionRecordCount;
+        public int PlaybackCount => _playback.Count;
+        public IReadOnlyList<string> SessionParts => _parts;
         private void Awake()
         {
             if (udpIngress == null) udpIngress = FindObjectOfType<DigitalTwinUdpIngress>();
@@ -93,16 +111,24 @@ namespace GroundStation.DigitalTwin
         {
             CloseWriter(true);
             _entries.Clear();
+            _parts.Clear();
             _dropped = 0;
             _ioError = "";
             _bytesWritten = 0;
+            _sessionRecordCount = 0;
+            _partIndex = 0;
+            _sessionId = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff");
             try
             {
                 string dir = Path.Combine(Application.persistentDataPath, "digital-twin-logs");
                 Directory.CreateDirectory(dir);
-                string path = Path.Combine(dir, Path.GetFileName(filePrefix) + "_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff") + ".jsonl");
+                string stem = Path.GetFileName(filePrefix) + "_" + _sessionId;
+                _sessionManifestPath = Path.Combine(dir, stem + ".session.json");
+                string path = Path.Combine(dir, stem + "_p000.jsonl");
                 _stream = new StreamWriter(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false)) { AutoFlush = false };
+                _parts.Add(path);
                 _lastSavedPath = path;
+                WriteManifest();
                 _writeRunning = true;
                 _writer = new Thread(WriteLoop) { IsBackground = true, Name = "Simurgh recorder" };
                 _writer.Start();
@@ -112,6 +138,7 @@ namespace GroundStation.DigitalTwin
             catch (Exception e)
             {
                 _recording = false;
+                _lastSavedPath = "";
                 LastReplayInfo = "Kayıt dosyası açılamadı: " + e.Message;
             }
         }
@@ -120,50 +147,74 @@ namespace GroundStation.DigitalTwin
         {
             _recording = false;
             CloseWriter(true);
+            if (!string.IsNullOrEmpty(_ioError)) LastReplayInfo = _ioError;
+            else if (_parts.Count > 1 && File.Exists(_sessionManifestPath))
+            {
+                _lastSavedPath = _sessionManifestPath;
+                LastReplayInfo = "Oturum kaydı tamamlandı: " + _sessionManifestPath;
+            }
+            else if (_parts.Count == 1)
+            {
+                _lastSavedPath = _parts[0];
+                LastReplayInfo = "Oturum kaydı tamamlandı: " + _lastSavedPath;
+            }
         }
         [ContextMenu("Save Recording")]
         public void SaveRecording()
         {
-            if (_recording && !string.IsNullOrEmpty(_lastSavedPath))
+            // Disk session is the source of truth. Never export the RAM preview as a full session.
+            if (_recording)
             {
-                Volatile.Write(ref _flushRequested, 1);
-                LastReplayInfo = "Artımlı kayıt: " + _lastSavedPath + " (son satır güç kaybında kaybolabilir)";
+                StopRecording();
+                if (!string.IsNullOrEmpty(_ioError))
+                {
+                    LastReplayInfo = _ioError;
+                    return;
+                }
+                LastReplayInfo = "Oturum kaydı tamamlandı: " + SessionIdentity();
                 return;
             }
-            if (_entries.Count == 0) { LastReplayInfo = "Kaydedilecek veri yok"; return; }
-            try
+            if (_parts.Count == 0 || string.IsNullOrEmpty(SessionIdentity()) || !File.Exists(SessionIdentity()))
             {
-                string dir = Path.Combine(Application.persistentDataPath, "digital-twin-logs");
-                Directory.CreateDirectory(dir);
-                string path = Path.Combine(dir, Path.GetFileName(filePrefix) + "_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff") + ".jsonl");
-                using (var writer = new StreamWriter(path, false))
-                    foreach (var entry in _entries) writer.WriteLine(Mapbox.Json.JsonConvert.SerializeObject(entry));
-                _lastSavedPath = path; LastReplayInfo = "Kayıt kaydedildi: " + path;
+                LastReplayInfo = "Kaydedilecek oturum yok";
+                return;
             }
-            catch (Exception e) { LastReplayInfo = "Kayıt yazılamadı: " + e.Message; }
+            LastReplayInfo = "Oturum kaydı: " + SessionIdentity();
         }
         [ContextMenu("Replay Last Recording")]
-        public void ReplayLastRecording() => ReplayFromFile(_lastSavedPath);
+        public void ReplayLastRecording()
+        {
+            if (!string.IsNullOrEmpty(_sessionManifestPath) && File.Exists(_sessionManifestPath))
+                ReplayFromFile(_sessionManifestPath);
+            else
+                ReplayFromFile(_lastSavedPath);
+        }
         public void ReplayFromFile(string path)
         {
             ResolveBridge();
-            if (_bridge == null || !File.Exists(path)) { LastReplayInfo = "Kayıt dosyası veya veri köprüsü bulunamadı"; return; }
+            if (_bridge == null || string.IsNullOrEmpty(path) || !File.Exists(path))
+            { LastReplayInfo = "Kayıt dosyası veya veri köprüsü bulunamadı"; return; }
             StopReplay();
             _playback.Clear(); ReplayApplied = ReplayRejected = _cursor = 0;
             try
             {
-                if (new FileInfo(path).Length > 64 * 1024 * 1024) throw new IOException("Kayıt dosyası 64 MB sınırını aşıyor");
+                var files = ResolveSessionFiles(path);
+                if (files.Count == 0) throw new IOException("Oturum parçası yok");
                 long previous = -1;
-                foreach (var line in File.ReadLines(path))
+                foreach (var file in files)
                 {
-                    if (string.IsNullOrWhiteSpace(line)) continue;
-                    LogEntry entry;
-                    try { entry = Mapbox.Json.JsonConvert.DeserializeObject<LogEntry>(line); }
-                    catch { ReplayRejected++; continue; }
-                    if (entry == null || entry.type != "ingress") continue;
-                    if (entry.timeMs < previous || string.IsNullOrWhiteSpace(entry.payload)) { ReplayRejected++; continue; }
-                    previous = entry.timeMs; _playback.Add(entry);
-                    if (_playback.Count > 100000) throw new IOException("Kayıt mesaj sınırını aşıyor");
+                    if (new FileInfo(file).Length > 64 * 1024 * 1024) throw new IOException("Kayıt dosyası 64 MB sınırını aşıyor");
+                    foreach (var line in File.ReadLines(file))
+                    {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        LogEntry entry;
+                        try { entry = Mapbox.Json.JsonConvert.DeserializeObject<LogEntry>(line); }
+                        catch { ReplayRejected++; continue; }
+                        if (entry == null || entry.type != "ingress") continue;
+                        if (entry.timeMs < previous || string.IsNullOrWhiteSpace(entry.payload)) { ReplayRejected++; continue; }
+                        previous = entry.timeMs; _playback.Add(entry);
+                        if (_playback.Count > 100000) throw new IOException("Kayıt mesaj sınırını aşıyor");
+                    }
                 }
             }
             catch (Exception e) { _playback.Clear(); LastReplayInfo = "Kayıt okunamadı: " + e.Message; return; }
@@ -202,6 +253,11 @@ namespace GroundStation.DigitalTwin
         private void Record(string type, string payload)
         {
             if (!_recording || string.IsNullOrEmpty(payload)) return;
+            if (!string.IsNullOrEmpty(_ioError))
+            {
+                LastReplayInfo = _ioError;
+                return;
+            }
             var entry = new LogEntry { type = type, timeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), payload = MaskSecrets(payload) };
             if (_entries.Count < 500) _entries.Add(entry);
             if (_writeQueue.Count >= Math.Max(32, maxQueuedLines))
@@ -217,6 +273,44 @@ namespace GroundStation.DigitalTwin
             if (string.IsNullOrEmpty(payload)) return payload;
             return Regex.Replace(payload, "\"authToken\"\\s*:\\s*\"[^\"]*\"", "\"authToken\":\"\"");
         }
+        private string SessionIdentity()
+        {
+            if (_parts.Count > 1 && File.Exists(_sessionManifestPath)) return _sessionManifestPath;
+            if (_parts.Count == 1) return _parts[0];
+            return _lastSavedPath;
+        }
+        private List<string> ResolveSessionFiles(string path)
+        {
+            var files = new List<string>();
+            string text = File.ReadAllText(path);
+            if (text.IndexOf("simurgh-session", StringComparison.Ordinal) >= 0)
+            {
+                var manifest = Mapbox.Json.JsonConvert.DeserializeObject<SessionManifest>(text);
+                if (manifest == null || manifest.parts == null || manifest.parts.Length == 0)
+                    throw new IOException("Oturum bildirimi geçersiz");
+                foreach (var part in manifest.parts)
+                {
+                    if (string.IsNullOrEmpty(part) || !File.Exists(part))
+                        throw new IOException("Oturum parçası eksik");
+                    files.Add(part);
+                }
+                return files;
+            }
+            files.Add(path);
+            return files;
+        }
+        private void WriteManifest()
+        {
+            if (string.IsNullOrEmpty(_sessionManifestPath)) return;
+            var manifest = new SessionManifest
+            {
+                type = "simurgh-session",
+                version = 1,
+                sessionId = _sessionId,
+                parts = _parts.ToArray()
+            };
+            File.WriteAllText(_sessionManifestPath, Mapbox.Json.JsonConvert.SerializeObject(manifest));
+        }
         private void WriteLoop()
         {
             while (_writeRunning || !_writeQueue.IsEmpty)
@@ -226,14 +320,14 @@ namespace GroundStation.DigitalTwin
                     try
                     {
                         if (_stream == null) return;
-                        if (_bytesWritten + line.Length + 2 > Math.Max(1024, maxFileBytes))
+                        if (_bytesWritten + line.Length + 2 > Math.Max(256, maxFileBytes))
                         {
-                            _ioError = "Kayıt dosyası boyut sınırına ulaştı";
-                            _writeRunning = false;
-                            return;
+                            RotateLocked();
+                            if (_stream == null) return;
                         }
                         _stream.WriteLine(line);
                         _bytesWritten += line.Length + 1;
+                        Interlocked.Increment(ref _sessionRecordCount);
                     }
                     catch (Exception e)
                     {
@@ -244,11 +338,27 @@ namespace GroundStation.DigitalTwin
                 }
                 if (Volatile.Read(ref _flushRequested) != 0)
                 {
-                    try { _stream?.Flush(); } catch (Exception e) { _ioError = "Kayıt flush başarısız: " + e.Message; _writeRunning = false; return; }
+                    try { _stream?.Flush(); }
+                    catch (Exception e) { _ioError = "Kayıt flush başarısız: " + e.Message; _writeRunning = false; return; }
                     Volatile.Write(ref _flushRequested, 0);
                 }
                 if (_writeRunning) Thread.Sleep(15);
             }
+        }
+        private void RotateLocked()
+        {
+            _stream.Flush();
+            _stream.Dispose();
+            _stream = null;
+            _partIndex++;
+            string dir = Path.GetDirectoryName(_parts[0]);
+            string stem = Path.GetFileName(filePrefix) + "_" + _sessionId;
+            string path = Path.Combine(dir, stem + "_p" + _partIndex.ToString("000") + ".jsonl");
+            _stream = new StreamWriter(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false)) { AutoFlush = false };
+            _parts.Add(path);
+            _bytesWritten = 0;
+            _lastSavedPath = path;
+            WriteManifest();
         }
         private void CloseWriter(bool flush)
         {
@@ -256,14 +366,27 @@ namespace GroundStation.DigitalTwin
             var writer = _writer;
             _writer = null;
             if (writer != null && writer.IsAlive)
-                try { writer.Join(500); } catch { }
+                try { writer.Join(8000); } catch { }
+            if (writer != null && writer.IsAlive)
+                _ioError = "Kayıt kuyruğu kapanışta boşaltılamadı";
+            else if (!_writeQueue.IsEmpty && string.IsNullOrEmpty(_ioError))
+                _ioError = "Kayıt kuyruğu kapanışta boşaltılamadı";
             if (flush)
             {
-                try { _stream?.Flush(); } catch { }
+                try { _stream?.Flush(); }
+                catch (Exception e) { if (string.IsNullOrEmpty(_ioError)) _ioError = "Kayıt kapanış flush başarısız: " + e.Message; }
             }
             try { _stream?.Dispose(); } catch { }
             _stream = null;
-            while (_writeQueue.TryDequeue(out _)) { }
+            if (!_writeQueue.IsEmpty)
+            {
+                int leftover = 0;
+                while (_writeQueue.TryDequeue(out _)) leftover++;
+                if (leftover > 0 && string.IsNullOrEmpty(_ioError))
+                    _ioError = "Kayıt kuyruğu kapanışta boşaltılamadı";
+            }
+            try { if (_parts.Count > 0) WriteManifest(); }
+            catch (Exception e) { if (string.IsNullOrEmpty(_ioError)) _ioError = "Oturum bildirimi yazılamadı: " + e.Message; }
         }
     }
 }

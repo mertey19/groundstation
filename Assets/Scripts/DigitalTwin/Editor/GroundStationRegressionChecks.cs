@@ -180,6 +180,71 @@ public static class GroundStationRegressionChecks
         _route.GetRouteData().waypoints[0].latitude += 0.01;
         egress.HandleAck(Ack(revised, "applied"), uav);
         Check(sent.Count == count && egress.LastCommandInfo.Contains("Rota değişti"), "Edited local route does not start from a stale upload ACK");
+        _route.GetRouteData().waypoints[0].latitude -= 0.01;
+        var data = _route.GetRouteData();
+        Check(egress.UploadAndStart(data), "Unchanged mission can be staged after a rejected stale ACK");
+        uploadId = egress.LastCommandId; count = sent.Count;
+        egress.HandleAck(Ack(uploadId, "applied"), uav);
+        Check(sent.Count == count + 1 && sent[sent.Count - 1].Contains("start_mission"), "Unchanged mission keeps a valid applied start chain");
+        egress.HandleAck(Ack(egress.LastCommandId, "applied"), uav);
+
+        Check(egress.UploadAndStart(data), "Speed-only edit can be staged");
+        uploadId = egress.LastCommandId; count = sent.Count;
+        data.waypoints[0].metadata.speedOverride = 12;
+        egress.HandleAck(Ack(uploadId, "applied"), uav);
+        Check(sent.Count == count && egress.LastCommandInfo.Contains("Rota değişti"), "Speed-only edit cannot start from the previous ACK");
+        data.waypoints[0].metadata.speedOverride = -1;
+
+        Check(egress.UploadAndStart(data), "Hold-only edit can be staged");
+        uploadId = egress.LastCommandId; count = sent.Count;
+        data.waypoints[0].metadata.holdTimeSeconds = 7;
+        egress.HandleAck(Ack(uploadId, "applied"), uav);
+        Check(sent.Count == count && egress.LastCommandInfo.Contains("Rota değişti"), "Hold-only edit cannot start from the previous ACK");
+        data.waypoints[0].metadata.holdTimeSeconds = 0;
+
+        Check(egress.UploadAndStart(data), "Action-only edit can be staged");
+        uploadId = egress.LastCommandId; count = sent.Count;
+        data.waypoints[0].metadata.actionId = "photo";
+        egress.HandleAck(Ack(uploadId, "applied"), uav);
+        Check(sent.Count == count && egress.LastCommandInfo.Contains("Rota değişti"), "Action-only edit cannot start from the previous ACK");
+        data.waypoints[0].metadata.actionId = "";
+
+        Check(egress.UploadAndStart(data), "Waypoint-order edit can be staged");
+        uploadId = egress.LastCommandId; count = sent.Count;
+        var swap = data.waypoints[0]; data.waypoints[0] = data.waypoints[1]; data.waypoints[1] = swap;
+        egress.HandleAck(Ack(uploadId, "applied"), uav);
+        Check(sent.Count == count && egress.LastCommandInfo.Contains("Rota değişti"), "Waypoint-order edit cannot start from the previous ACK");
+        swap = data.waypoints[0]; data.waypoints[0] = data.waypoints[1]; data.waypoints[1] = swap;
+
+        Check(egress.UploadAndStart(data), "Waypoint-count edit can be staged");
+        uploadId = egress.LastCommandId; count = sent.Count;
+        data.waypoints.Add(new WaypointData(2, Vector3.up, 41.306, -81.754, 35));
+        egress.HandleAck(Ack(uploadId, "applied"), uav);
+        Check(sent.Count == count && egress.LastCommandInfo.Contains("Rota değişti"), "Waypoint-count edit cannot start from the previous ACK");
+        data.waypoints.RemoveAt(2);
+
+        Check(egress.UploadAndStart(data), "Revert-after-edit can be staged");
+        uploadId = egress.LastCommandId; count = sent.Count;
+        data.waypoints[0].metadata.speedOverride = 9;
+        egress.Tick(Time.unscaledTime);
+        data.waypoints[0].metadata.speedOverride = -1;
+        egress.HandleAck(Ack(uploadId, "applied"), uav);
+        Check(sent.Count == count && egress.LastCommandInfo.Contains("Rota değişti"), "Reverting an edit does not revive the previous start chain");
+
+        Check(egress.UploadAndStart(data), "Accepted-only route can be staged");
+        uploadId = egress.LastCommandId; count = sent.Count;
+        egress.HandleAck(Ack(uploadId, "accepted"), uav);
+        Check(egress.LastStatus == VehicleCommandStatus.Accepted && sent.Count == count && !sent[sent.Count - 1].Contains("start_mission"),
+            "Accepted alone never starts the mission");
+        egress.CancelPending("accepted-only complete");
+
+        Check(egress.UploadAndStart(data), "Timeout route can be staged");
+        uploadId = egress.LastCommandId; count = sent.Count;
+        egress.Tick(Time.unscaledTime + 11);
+        Check(egress.LastStatus == VehicleCommandStatus.TimedOut, "Missing route ACK times out");
+        egress.HandleAck(Ack(uploadId, "applied"), uav);
+        Check(sent.Count == count && !sent[sent.Count - 1].Contains("start_mission"), "Late applied ACK after timeout does not start the mission");
+
         var peers = (IDictionary)Get(ingress, "_peers"); SetPublic(peers["uav"], "seenAt", Time.unscaledTime - 6f);
         Check(!egress.TryResolveEndpoint("uav", out _, out _), "Command peer expires independently");
         Queue(ingress, Message("uav-main", "uav", 9, Telemetry(10)), "192.0.2.10"); Call(ingress, "Update");
@@ -272,6 +337,61 @@ public static class GroundStationRegressionChecks
             Check(scaled.Success && RoverLocalPlanner.PathClear(scaled.Path, special, 0.6), "Cell size " + cell + " m still yields a collision-free metre-space path");
         }
 
+        var disk = new RoverPlanRequest
+        {
+            Start = new LocalMeterPoint(0, 0), Goal = new LocalMeterPoint(8, 8), Obstacles = Array.Empty<DiskObstacle>(),
+            RoverRadiusM = 0, SafetyMarginM = 0, CellSizeM = 0.5, MapGeneration = 11, MaxMilliseconds = 200,
+            CircleConfigured = true, CircleEast = 0, CircleNorth = 0, CircleRadiusM = 10, FenceRevision = 3
+        };
+        var boxedOutside = RoverLocalPlanner.Plan(disk);
+        Check(!boxedOutside.Success && boxedOutside.Path.Length == 0 && boxedOutside.FenceRevision == 3,
+            "Goal inside the bounding square but outside the 10 m circle is rejected with no fallback path");
+        foreach (double cell in new[] { 0.25, 0.5, 0.8 })
+        {
+            disk.CellSizeM = cell; disk.MapGeneration = 12;
+            Check(!RoverLocalPlanner.Plan(disk).Success, "Circle rejection at cell size " + cell + " m stays in metres, not map pixels");
+        }
+        disk.Goal = new LocalMeterPoint(0, 9.99); disk.CellSizeM = 0.5; disk.MapGeneration = 13;
+        var justInside = RoverLocalPlanner.Plan(disk);
+        Check(justInside.Success && RoverLocalPlanner.PathInCircle(justInside.Path, disk), "Point just inside the circle is accepted");
+        disk.Goal = new LocalMeterPoint(0, 10.01); disk.MapGeneration = 14;
+        Check(!RoverLocalPlanner.Plan(disk).Success, "Point just outside the circle is rejected");
+        disk.RoverRadiusM = 0.4; disk.SafetyMarginM = 0.5;
+        disk.CircleRadiusM = RoverLocalPlanner.EffectiveCircleRadius(10, 0.4, 0.5);
+        disk.Goal = new LocalMeterPoint(9.5, 0); disk.MapGeneration = 15;
+        Check(!RoverLocalPlanner.Plan(disk).Success, "Goal inside the raw fence but outside the vehicle-center radius is rejected");
+        disk.Goal = new LocalMeterPoint(8.5, 0); disk.MapGeneration = 16;
+        var sized = RoverLocalPlanner.Plan(disk);
+        Check(sized.Success && RoverLocalPlanner.PathInCircle(sized.Path, disk), "Goal inside the shrunken vehicle-center radius is accepted");
+        disk.RoverRadiusM = 0; disk.SafetyMarginM = 0; disk.CircleRadiusM = 10;
+        disk.Start = new LocalMeterPoint(11, 0); disk.Goal = new LocalMeterPoint(0, 0); disk.MapGeneration = 17;
+        var outsideStart = RoverLocalPlanner.Plan(disk);
+        Check(!outsideStart.Success && outsideStart.Error.IndexOf("Başlangıç", StringComparison.Ordinal) >= 0,
+            "Start outside the fence fails closed without inventing a recovery path");
+        disk.Start = new LocalMeterPoint(0, 0); disk.Goal = new LocalMeterPoint(0, 8); disk.CircleRadiusM = 10; disk.MapGeneration = 18;
+        var fenceWall = new List<DiskObstacle>();
+        for (int i = -12; i <= 12; i++) fenceWall.Add(new DiskObstacle(i * 0.7, 5, 0.55));
+        disk.Obstacles = fenceWall.ToArray();
+        var fenceDetour = RoverLocalPlanner.Plan(disk);
+        Check(!fenceDetour.Success && fenceDetour.Path.Length == 0, "A detour that would leave the circle is rejected");
+        disk.Obstacles = Array.Empty<DiskObstacle>();
+        disk.CircleRadiusM = 0; disk.MapGeneration = 19;
+        Check(!RoverLocalPlanner.Plan(disk).Success, "Configured circle with a non-positive radius fails closed");
+        disk.CircleRadiusM = double.NaN; disk.MapGeneration = 20;
+        Check(!RoverLocalPlanner.Plan(disk).Success, "Configured circle with invalid radius fails closed");
+        disk.CircleConfigured = false; disk.CircleRadiusM = 10; disk.Start = new LocalMeterPoint(0, 0); disk.Goal = new LocalMeterPoint(10, 0);
+        disk.RoverRadiusM = 0.4; disk.SafetyMarginM = 0.2;
+        disk.Obstacles = special; disk.MapGeneration = 21; disk.CellSizeM = 0.25;
+        var afterFence = RoverLocalPlanner.Plan(disk);
+        Check(afterFence.Success && RoverLocalPlanner.PathClear(afterFence.Path, special, 0.6), "Existing obstacle and segment checks remain after geofence tests");
+        var fence = Child("fence").AddComponent<DigitalTwinGeofence>();
+        int rev = fence.Revision;
+        fence.SetFence(41.304, -81.752, 50);
+        Check(fence.Revision == rev + 1 && fence.TryGetCircle(out _, out _, out float fenceR) && fenceR >= 10,
+            "Geofence revision advances and invalid-or-unconfigured circles do not look like a valid fence");
+        fence.SetFence(41.304, -81.752, 80);
+        Check(fence.Revision == rev + 2, "A later fence edit is a new revision for in-flight plans to discard");
+
         Check(GeoFrames.TryWgs84ToEnu(41.304, -81.752, 41.304, -81.752, out double e0, out double n0) && Math.Abs(e0) < 1e-6 && Math.Abs(n0) < 1e-6, "ENU origin is zero");
         Check(GeoFrames.TryWgs84ToEnu(41.304, -81.752, 41.304, -81.751, out double east, out _) && east > 0, "Increasing longitude is east");
         Check(GeoFrames.TryWgs84ToEnu(41.304, -81.752, 41.305, -81.752, out _, out double north) && north > 0, "Increasing latitude is north");
@@ -332,6 +452,61 @@ public static class GroundStationRegressionChecks
         var buffered = (System.Collections.ICollection)Get(recorder, "_entries");
         Check(buffered.Count <= 500, "Recorder does not keep an unbounded in-memory copy of the session");
         recorder.StopRecording();
+
+        recorder.StartRecording();
+        for (int i = 0; i < 1200; i++)
+            recorder.RecordPayload("ingress", Message("session-src", "uav", i + 1, Telemetry(10), Now - 86400000 + i));
+        buffered = (System.Collections.ICollection)Get(recorder, "_entries");
+        Check(buffered.Count <= 500, "A 1200-record session still keeps only a 500-line RAM preview");
+        recorder.SaveRecording();
+        Check(!recorder.IsRecording, "Save while recording finalizes the disk session instead of dumping RAM");
+        Check(recorder.SessionRecordCount == 1200, "Stop/Save drains all 1200 records to disk");
+        string fullSession = recorder.LastSavedPath;
+        recorder.SaveRecording();
+        recorder.StopRecording();
+        recorder.SaveRecording();
+        Check(recorder.LastSavedPath == fullSession, "Repeated Stop/Save does not replace the session with a truncated RAM copy");
+        recorder.ReplayFromFile(fullSession);
+        DrainReplay(recorder);
+        Check(recorder.PlaybackCount == 1200 && recorder.ReplayApplied == 1200, "Reloaded 1200-record session preserves order and count");
+        recorder.StopReplay();
+        bool sessionClean = true;
+        foreach (var part in recorder.SessionParts)
+            if (!File.Exists(part) || File.ReadAllText(part).Contains("simurgh-2026")) sessionClean = false;
+        Check(sessionClean, "No session part contains authToken");
+
+        var rotating = Child("rotating recorder").AddComponent<DigitalTwinOperationRecorder>();
+        Set(rotating, "ingressBehaviour", _bridge);
+        Set(rotating, "maxFileBytes", 400);
+        rotating.StartRecording();
+        for (int i = 0; i < 40; i++)
+            rotating.RecordPayload("ingress", Message("rotate-src", "uav", i + 1, Telemetry(10), Now - 86400000 + i));
+        rotating.StopRecording();
+        Check(rotating.SessionParts.Count >= 2, "A small file limit rotates into sequential parts");
+        Check(rotating.SessionRecordCount == 40 && rotating.DroppedRecordCount == 0, "Rotation neither drops nor duplicates records");
+        rotating.ReplayFromFile(rotating.SessionManifestPath);
+        DrainReplay(rotating);
+        Check(rotating.PlaybackCount == 40 && rotating.ReplayApplied == 40, "Multi-part session replays as one ordered session");
+        rotating.StopReplay();
+        bool rotatedClean = true;
+        foreach (var part in rotating.SessionParts)
+            if (File.ReadAllText(part).Contains("simurgh-2026")) rotatedClean = false;
+        Check(rotatedClean, "Rotated parts also mask tokens");
+
+        string previousPath = recorder.LastSavedPath;
+        var broken = Child("broken recorder").AddComponent<DigitalTwinOperationRecorder>();
+        Set(broken, "ingressBehaviour", _bridge);
+        broken.StartRecording();
+        ((StreamWriter)Get(broken, "_stream")).Dispose();
+        broken.RecordPayload("ingress", Message("err-src", "uav", 1, Telemetry(10)));
+        typeof(DigitalTwinOperationRecorder).GetField("_flushRequested", Hidden).SetValue(broken, 1);
+        deadline = DateTime.UtcNow.AddSeconds(2);
+        while (DateTime.UtcNow < deadline && string.IsNullOrEmpty(broken.LastIoError))
+            System.Threading.Thread.Sleep(50);
+        Check(!string.IsNullOrEmpty(broken.LastIoError), "Disk write failure is visible instead of a silent RAM export");
+        broken.SaveRecording();
+        Check(recorder.LastSavedPath == previousPath, "A failed writer does not retarget the previous session path");
+        broken.StopRecording();
     }
 
     private static void ExportAndSurvey()
@@ -380,6 +555,12 @@ public static class GroundStationRegressionChecks
         }
         using (var db = new SQLite4Unity3d.SQLiteConnection(path))
             Check(db.ExecuteScalar<int>("SELECT COUNT(*) FROM regression") == 1, "SQLite data persists after connection reopen");
+    }
+    private static void DrainReplay(DigitalTwinOperationRecorder recorder)
+    {
+        int guard = 0;
+        while (recorder.IsReplaying && guard++ < 80)
+            recorder.AdvanceReplay(1000f);
     }
     private static string Telemetry(int battery) => "\"telemetry\":{\"altitudeM\":173,\"speedMps\":12,\"mode\":\"AUTO\",\"batteryPercent\":" + battery + "}";
     private static string Message(string source, string vehicle, long seq, string payload, long timestamp = -1) => "{\"schemaVersion\":\"1.0\",\"authToken\":\"simurgh-2026\",\"sourceId\":\"" + source + "\",\"vehicleType\":\"" + vehicle + "\",\"sequenceId\":" + seq + ",\"timestampMs\":" + (timestamp < 0 ? Now : timestamp) + "," + payload + "}";

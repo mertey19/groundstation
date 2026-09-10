@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -47,7 +48,9 @@ namespace GroundStation.DigitalTwin
             public float startedAt, sentAt;
             public int attempts;
             public bool accepted;
-            public string routeFingerprint;
+            public string stagedSnapshot;
+            public RouteData liveRoute;
+            public bool contentDiverged;
             public string source;
             public Action<bool> completion;
         }
@@ -85,38 +88,32 @@ namespace GroundStation.DigitalTwin
             endpoint = new IPEndPoint(peer.Address, targetPort);
             return true;
         }
-        public bool SendCommand(string command, string vehicleType = "uav") => Send(command, vehicleType, 0, null, null);
+        public bool SendCommand(string command, string vehicleType = "uav") => Send(command, vehicleType, 0, null, null, null, null);
         public bool SendReturnToLaunch() => SendCommand("rtl");
         public bool SendEmergencyStop() => SendCommand("emergency_stop");
-        public bool SetSpeed(float speed) => Send("set_speed", "uav", speed, null, null);
-        public bool SetAltitude(float altitude) => Send("set_altitude", "uav", altitude, null, null);
+        public bool SetSpeed(float speed) => Send("set_speed", "uav", speed, null, null, null, null);
+        public bool SetAltitude(float altitude) => Send("set_altitude", "uav", altitude, null, null, null, null);
         public bool UploadAndStart(RouteData data)
         {
             if (data?.waypoints == null || data.Count < 2) return Fail("Başlatmak için en az iki waypoint gerekli");
-            var route = new TwinRouteBlock { waypoints = new TwinRouteWaypoint[data.Count] };
-            for (int i = 0; i < data.Count; i++)
+            var route = BuildRoute(data);
+            for (int i = 0; i < route.waypoints.Length; i++)
             {
-                var w = data.waypoints[i];
-                if (w == null || !w.hasGeoPosition || !DigitalTwinMessageValidation.Geo(w.latitude, w.longitude)
-                    || !DigitalTwinMessageValidation.Finite(w.targetAltitude) || w.targetAltitude <= 0)
+                var w = route.waypoints[i];
+                if (w == null || !DigitalTwinMessageValidation.Geo(w.latitude, w.longitude)
+                    || !DigitalTwinMessageValidation.Finite(w.altitudeM) || w.altitudeM <= 0)
                     return Fail("Rota coğrafi koordinatları veya irtifası eksik");
-                route.waypoints[i] = new TwinRouteWaypoint { index = i, operation = "upsert", latitude = w.latitude,
-                    longitude = w.longitude, altitudeM = w.targetAltitude, speedMps = w.metadata?.speedOverride ?? -1,
-                    holdSeconds = w.metadata?.holdTimeSeconds ?? 0, action = w.metadata?.actionId ?? "" };
             }
-            if (!TryResolveEndpoint("uav", out var originalEndpoint, out var originalSource)) return Fail("Doğrulanmış İHA bağlantısı yok");
-            string staged = Fingerprint(route);
+            if (!TryResolveEndpoint("uav", out _, out var originalSource)) return Fail("Doğrulanmış İHA bağlantısı yok");
+            string staged = MissionSnapshot("uav", originalSource, "relative_home", route);
             return Send("upload_route", "uav", 0, route, applied =>
             {
                 if (!applied) return;
-                if (!TryResolveEndpoint("uav", out var current, out var source) || !current.Equals(originalEndpoint) || source != originalSource)
-                { Fail("Rota yüklendi; bağlantı değiştiği için başlatılmadı"); return; }
-                if (Fingerprint(BuildRoute(data)) != staged)
-                { Fail("Rota değişti; eski yükleme onayı görevi başlatmadı"); return; }
                 SendCommand("start_mission");
-            }, staged);
+            }, data, staged);
         }
-        private bool Send(string command, string vehicle, float value, TwinRouteBlock route, Action<bool> completion, string routeFingerprint = null)
+        private bool Send(string command, string vehicle, float value, TwinRouteBlock route, Action<bool> completion,
+            RouteData liveRoute, string stagedSnapshot)
         {
             Resolve();
             if (GroundStationMode.SimulationSelected || remoteState == null || remoteState.IsReplay || remoteState.IsSample)
@@ -133,11 +130,12 @@ namespace GroundStation.DigitalTwin
             else if (_pending.Count > 0) return Fail("Önceki komutun araç onayı bekleniyor");
             var message = new VehicleCommandMessage { commandId = Guid.NewGuid().ToString("N"), command = command,
                 vehicleType = vehicle, targetSourceId = source, timestampMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-                authToken = authToken, value = value, route = route };
+                authToken = authToken, value = value, altitudeReference = "relative_home", route = route };
             byte[] bytes = Encoding.UTF8.GetBytes(Mapbox.Json.JsonConvert.SerializeObject(message));
             if (bytes.Length > 60000) return Fail("Rota tek paket sınırını aşıyor; waypoint sayısını azaltın");
             var pending = new Pending { message = message, endpoint = endpoint, bytes = bytes,
-                startedAt = Time.unscaledTime, completion = completion, source = source, routeFingerprint = routeFingerprint };
+                startedAt = Time.unscaledTime, completion = completion, source = source,
+                liveRoute = liveRoute, stagedSnapshot = stagedSnapshot };
             _pending[message.commandId] = pending;
             LastCommandId = message.commandId;
             if (!Transmit(pending, Time.unscaledTime))
@@ -180,6 +178,7 @@ namespace GroundStation.DigitalTwin
             { CancelPending("Mod değişti; bekleyen işlem iptal edildi"); return; }
             foreach (var pending in new List<Pending>(_pending.Values))
             {
+                RefreshDivergence(pending);
                 if (!TryResolveEndpoint(pending.message.vehicleType, out var current, out var source)
                     || !current.Address.Equals(pending.endpoint.Address) || source != pending.source)
                 { Finish(pending, VehicleCommandStatus.Cancelled, "Kaynak veya oturum değişti; araç sonucu bilinmiyor"); continue; }
@@ -195,8 +194,26 @@ namespace GroundStation.DigitalTwin
         private void Finish(Pending pending, VehicleCommandStatus status, string message)
         {
             if (!_pending.Remove(pending.message.commandId)) return;
+            bool allowStart = status == VehicleCommandStatus.Applied;
+            if (allowStart && pending.message.command == "upload_route" && pending.liveRoute != null)
+            {
+                RefreshDivergence(pending);
+                if (pending.contentDiverged)
+                {
+                    status = VehicleCommandStatus.Rejected;
+                    message = "Rota değişti; eski yükleme onayı görevi başlatmadı";
+                    allowStart = false;
+                }
+                else if (!TryResolveEndpoint(pending.message.vehicleType, out var current, out var source)
+                    || !current.Equals(pending.endpoint) || source != pending.source)
+                {
+                    status = VehicleCommandStatus.Rejected;
+                    message = "Rota yüklendi; bağlantı değiştiği için başlatılmadı";
+                    allowStart = false;
+                }
+            }
             Publish(pending, status, message);
-            pending.completion?.Invoke(status == VehicleCommandStatus.Applied);
+            pending.completion?.Invoke(allowStart);
         }
         private void Publish(Pending pending, VehicleCommandStatus status, string message)
         {
@@ -205,7 +222,14 @@ namespace GroundStation.DigitalTwin
             OnCommandStatus?.Invoke(new VehicleCommandResult { command = pending.message, status = status, message = message });
         }
         private bool Fail(string message) { LastCommandInfo = message; LastStatus = VehicleCommandStatus.Rejected; return false; }
-        private static TwinRouteBlock BuildRoute(RouteData data)
+        private static void RefreshDivergence(Pending pending)
+        {
+            if (pending == null || pending.contentDiverged || pending.liveRoute == null) return;
+            string live = MissionSnapshot(pending.message.vehicleType, pending.source,
+                pending.message.altitudeReference, BuildRoute(pending.liveRoute));
+            if (live != pending.stagedSnapshot) pending.contentDiverged = true;
+        }
+        internal static TwinRouteBlock BuildRoute(RouteData data)
         {
             if (data?.waypoints == null) return new TwinRouteBlock { waypoints = Array.Empty<TwinRouteWaypoint>() };
             var route = new TwinRouteBlock { waypoints = new TwinRouteWaypoint[data.Count] };
@@ -213,21 +237,52 @@ namespace GroundStation.DigitalTwin
             {
                 var w = data.waypoints[i];
                 if (w == null) continue;
-                route.waypoints[i] = new TwinRouteWaypoint { index = i, latitude = w.latitude, longitude = w.longitude, altitudeM = w.targetAltitude };
+                route.waypoints[i] = new TwinRouteWaypoint
+                {
+                    index = i,
+                    operation = "upsert",
+                    latitude = w.latitude,
+                    longitude = w.longitude,
+                    altitudeM = w.targetAltitude,
+                    speedMps = w.metadata?.speedOverride ?? -1f,
+                    holdSeconds = w.metadata?.holdTimeSeconds ?? 0f,
+                    action = w.metadata?.actionId ?? ""
+                };
             }
             return route;
         }
-        private static string Fingerprint(TwinRouteBlock route)
+        // Transport fields (commandId, retry time, token) are excluded. Bits avoid culture-dependent ToString.
+        internal static string MissionSnapshot(string vehicle, string source, string altitudeReference, TwinRouteBlock route)
         {
-            if (route?.waypoints == null) return "";
             var sb = new StringBuilder();
+            sb.Append(vehicle ?? "").Append('\n');
+            sb.Append(source ?? "").Append('\n');
+            sb.Append(string.IsNullOrEmpty(altitudeReference) ? "relative_home" : altitudeReference).Append('\n');
+            if (route?.waypoints == null)
+            {
+                sb.Append('0');
+                return sb.ToString();
+            }
+            sb.Append(route.waypoints.Length.ToString(CultureInfo.InvariantCulture)).Append('\n');
             for (int i = 0; i < route.waypoints.Length; i++)
             {
                 var w = route.waypoints[i];
-                if (w == null) continue;
-                sb.Append(w.latitude.ToString("R")).Append(',').Append(w.longitude.ToString("R")).Append(',').Append(w.altitudeM.ToString("R")).Append(';');
+                if (w == null) { sb.Append("null\n"); continue; }
+                sb.Append(w.index.ToString(CultureInfo.InvariantCulture)).Append('|');
+                sb.Append(w.operation ?? "").Append('|');
+                sb.Append(BitConverter.DoubleToInt64Bits(w.latitude).ToString(CultureInfo.InvariantCulture)).Append('|');
+                sb.Append(BitConverter.DoubleToInt64Bits(w.longitude).ToString(CultureInfo.InvariantCulture)).Append('|');
+                sb.Append(SingleBits(w.altitudeM).ToString(CultureInfo.InvariantCulture)).Append('|');
+                sb.Append(SingleBits(w.speedMps).ToString(CultureInfo.InvariantCulture)).Append('|');
+                sb.Append(SingleBits(w.holdSeconds).ToString(CultureInfo.InvariantCulture)).Append('|');
+                sb.Append(w.action ?? "").Append('\n');
             }
             return sb.ToString();
+        }
+        private static int SingleBits(float value)
+        {
+            var bytes = BitConverter.GetBytes(value);
+            return BitConverter.ToInt32(bytes, 0);
         }
         private static string Label(string command)
         {
@@ -245,4 +300,3 @@ namespace GroundStation.DigitalTwin
         }
     }
 }
-

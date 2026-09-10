@@ -49,6 +49,8 @@ public static class GroundStationRegressionChecks
             ValidationAndTelemetry();
             RoutesAndReplay();
             Commands();
+            PlannerAndFrames();
+            RecorderPersistence();
             ExportAndSurvey();
             Sqlite();
             HudRegressionChecks.Run();
@@ -173,11 +175,29 @@ public static class GroundStationRegressionChecks
         Check(sent.Count == count, "Late upload ACK after hold never starts a mission");
         egress.CancelPending("test complete"); _bridge.BeginReplay(); count = sent.Count;
         Check(!egress.SendReturnToLaunch() && sent.Count == count, "Replay never emits a live vehicle command"); _bridge.EndReplay();
+        Check(egress.UploadAndStart(_route.GetRouteData()), "Route can be staged for revision check");
+        string revised = egress.LastCommandId; count = sent.Count;
+        _route.GetRouteData().waypoints[0].latitude += 0.01;
+        egress.HandleAck(Ack(revised, "applied"), uav);
+        Check(sent.Count == count && egress.LastCommandInfo.Contains("Rota değişti"), "Edited local route does not start from a stale upload ACK");
         var peers = (IDictionary)Get(ingress, "_peers"); SetPublic(peers["uav"], "seenAt", Time.unscaledTime - 6f);
         Check(!egress.TryResolveEndpoint("uav", out _, out _), "Command peer expires independently");
+        Queue(ingress, Message("uav-main", "uav", 9, Telemetry(10)), "192.0.2.10"); Call(ingress, "Update");
+        Check(egress.SendCommand("hold") && egress.LastStatus == VehicleCommandStatus.Waiting, "Fresh peer accepts a new command");
+        SetPublic(peers["uav"], "seenAt", Time.unscaledTime - 6f);
+        egress.Tick(Time.unscaledTime + 0.1f);
+        Check(egress.LastStatus == VehicleCommandStatus.Cancelled && egress.LastCommandInfo.Contains("bilinmiyor"), "Source expiry cancels pending work without claiming the vehicle reversed it");
+        Queue(ingress, Message("uav-main", "uav", 10, Telemetry(10)), "192.0.2.10"); Call(ingress, "Update");
+        Check(egress.SendCommand("hold"), "Command after re-auth waits for ACK");
+        string staleAckId = egress.LastCommandId;
+        var oldAck = Mapbox.Json.JsonConvert.DeserializeObject<VehicleCommandAck>(Ack(staleAckId, "applied"));
+        oldAck.timestampMs = Now - 120000;
+        egress.HandleAck(Mapbox.Json.JsonConvert.SerializeObject(oldAck), uav);
+        Check(egress.LastStatus == VehicleCommandStatus.Waiting, "ACK older than the command is ignored");
+        egress.CancelPending("test complete");
         // Verify actual transport exclusively against a local socket with an ephemeral port.
         ingress.StopIngress();
-        Queue(ingress, Message("uav-main", "uav", 8, Telemetry(10)), "127.0.0.1"); Call(ingress, "Update");
+        Queue(ingress, Message("uav-main", "uav", 11, Telemetry(10)), "127.0.0.1"); Call(ingress, "Update");
         using (var socket = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)))
         {
             socket.Client.ReceiveTimeout = 1500;
@@ -189,6 +209,129 @@ public static class GroundStationRegressionChecks
             Queue(ingress, Ack(command.commandId, "applied"), "127.0.0.1"); Call(ingress, "Update");
             Check(egress.LastStatus == VehicleCommandStatus.Applied, "Ingress command ACK dispatch reaches command tracker");
         }
+    }
+
+    private static void PlannerAndFrames()
+    {
+        var special = new DiskObstacle[] { new DiskObstacle(3, 0, 1) };
+        var request = new RoverPlanRequest
+        {
+            Start = new LocalMeterPoint(0, 0), Goal = new LocalMeterPoint(10, 0), Obstacles = special,
+            RoverRadiusM = 0.4, SafetyMarginM = 0.2, CellSizeM = 0.25, MapGeneration = 1, MaxMilliseconds = 200
+        };
+        var around = RoverLocalPlanner.Plan(request);
+        Check(around.Success && around.Status == RoverPlanStatus.Detour, "Classic corridor obstacle returns a detour, not a blocked search");
+        Check(RoverLocalPlanner.PathClear(around.Path, special, 0.6), "Detour segments stay outside the inflated obstacle");
+        Check(RoverLocalPlanner.SegmentHits(new LocalMeterPoint(0, 0), new LocalMeterPoint(10, 0), special[0], 0.6), "Straight line through the obstacle is detected");
+        bool bypassOnAxis = false;
+        for (int i = 0; i < around.Path.Length; i++)
+            if (Math.Abs(around.Path[i].North) < 0.05 && around.Path[i].East > 2 && around.Path[i].East < 4) bypassOnAxis = true;
+        Check(!bypassOnAxis, "A side-step that remains on the obstacle axis is not accepted as a plan");
+
+        var pair = new DiskObstacle[] { new DiskObstacle(4, 3, 1.2), new DiskObstacle(7, -3, 1.2) };
+        request.Obstacles = pair; request.MapGeneration = 2;
+        var multi = RoverLocalPlanner.Plan(request);
+        Check(multi.Success && RoverLocalPlanner.PathClear(multi.Path, pair, 0.6), "Multiple obstacles are all tested, not only the nearest");
+
+        var gap = new DiskObstacle[] { new DiskObstacle(5, 2.3, 1.2), new DiskObstacle(5, -2.3, 1.2) };
+        request.Obstacles = gap; request.CellSizeM = 0.2; request.MapGeneration = 3;
+        var narrow = RoverLocalPlanner.Plan(request);
+        Check(narrow.Success && RoverLocalPlanner.PathClear(narrow.Path, gap, 0.6), "Narrow corridor remains geometrically clear");
+
+        var wall = new List<DiskObstacle>();
+        for (int i = -8; i <= 8; i++) wall.Add(new DiskObstacle(5, i * 0.7, 0.55));
+        request.Obstacles = wall.ToArray(); request.CellSizeM = 0.25; request.MapGeneration = 4;
+        request.BoundsMinEast = -1; request.BoundsMaxEast = 11; request.BoundsMinNorth = -3; request.BoundsMaxNorth = 3;
+        var closed = RoverLocalPlanner.Plan(request);
+        Check(!closed.Success && closed.Path.Length == 0, "Fully blocked goal does not emit a straight line through obstacles");
+        request.BoundsMinEast = request.BoundsMaxEast = request.BoundsMinNorth = request.BoundsMaxNorth = null;
+
+        request.Obstacles = special; request.Start = new LocalMeterPoint(3, 0); request.Goal = new LocalMeterPoint(10, 0); request.MapGeneration = 5;
+        Check(!RoverLocalPlanner.Plan(request).Success, "Start inside an inflated obstacle fails closed");
+        request.Start = new LocalMeterPoint(0, 0); request.Goal = new LocalMeterPoint(3, 0); request.MapGeneration = 6;
+        Check(!RoverLocalPlanner.Plan(request).Success, "Goal inside an inflated obstacle fails closed");
+
+        request.Goal = new LocalMeterPoint(10, 0); request.Obstacles = special;
+        request.BoundsMinEast = -1; request.BoundsMaxEast = 11; request.BoundsMinNorth = -0.4; request.BoundsMaxNorth = 0.4; request.MapGeneration = 7;
+        var fenced = RoverLocalPlanner.Plan(request);
+        Check(!fenced.Success && fenced.Path.Length == 0, "Workspace bounds that close the bypass reject the plan");
+
+        request.BoundsMinEast = request.BoundsMaxEast = request.BoundsMinNorth = request.BoundsMaxNorth = null;
+        request.Obstacles = Array.Empty<DiskObstacle>(); request.MapGeneration = 8; request.CellSizeM = 0.5;
+        var clear = RoverLocalPlanner.Plan(request);
+        Check(clear.Success && clear.Status == RoverPlanStatus.Clear && clear.Path.Length == 2, "Empty workspace yields a direct path and is not auto-sent");
+        request.Obstacles = special; request.MapGeneration = 9;
+        var after = RoverLocalPlanner.Plan(request);
+        Check(after.MapGeneration == 9 && after.Success && after.Status == RoverPlanStatus.Detour, "A newer map generation is stamped on the later plan");
+        Check(clear.MapGeneration == 8, "Older clear plan cannot silently replace a newer generation stamp");
+
+        foreach (double cell in new[] { 0.25, 0.5, 0.8 })
+        {
+            request.CellSizeM = cell; request.MapGeneration = 10;
+            var scaled = RoverLocalPlanner.Plan(request);
+            Check(scaled.Success && RoverLocalPlanner.PathClear(scaled.Path, special, 0.6), "Cell size " + cell + " m still yields a collision-free metre-space path");
+        }
+
+        Check(GeoFrames.TryWgs84ToEnu(41.304, -81.752, 41.304, -81.752, out double e0, out double n0) && Math.Abs(e0) < 1e-6 && Math.Abs(n0) < 1e-6, "ENU origin is zero");
+        Check(GeoFrames.TryWgs84ToEnu(41.304, -81.752, 41.304, -81.751, out double east, out _) && east > 0, "Increasing longitude is east");
+        Check(GeoFrames.TryWgs84ToEnu(41.304, -81.752, 41.305, -81.752, out _, out double north) && north > 0, "Increasing latitude is north");
+        Check(GeoFrames.TryEnuToWgs84(41.304, -81.752, east, 0, out double lat, out double lon)
+            && GeoFrames.TryWgs84ToEnu(41.304, -81.752, lat, lon, out double east2, out double north2)
+            && Math.Abs(east - east2) < 0.05 && Math.Abs(north2) < 0.05, "ENU round-trip stays within 5 cm");
+        Check(!GeoFrames.TryCompareAltitude(10, AltitudeDatum.RelativeHome, 10, AltitudeDatum.Ellipsoid, out _), "Relative-home and ellipsoid altitudes are not silently swapped");
+        Check(!GeoFrames.TryCompareAltitude(0, AltitudeDatum.Unknown, 0, AltitudeDatum.Unknown, out _), "Unknown altitude datum is not treated as a measured zero");
+        Check(!GeoFrames.TrySlamToEnu(1, 0, new FrameCalibration { Verified = false, Scale = 1 }, out _, out _), "Unverified SLAM calibration is not an identity transform");
+        Check(GeoFrames.TrySlamToEnu(1, 0, new FrameCalibration { Verified = true, Scale = 2, YawDeg = 90, EastOffsetM = 5, NorthOffsetM = 7 }, out double slamE, out double slamN)
+            && Math.Abs(slamE - 5) < 1e-6 && Math.Abs(slamN - 9) < 1e-6, "Verified SLAM yaw and scale are applied explicitly");
+        Check(SiteGeoReference.TryProject(41.30432962584914, -81.75240772357038, "EPSG:32617", out double utmE, out double utmN)
+            && SiteGeoReference.TryUnproject(utmE, utmN, "EPSG:32617", out double backLat, out double backLon)
+            && GeoFrames.HaversineMeters(41.30432962584914, -81.75240772357038, backLat, backLon) < 0.5, "UTM zone 17N round-trip stays within half a metre");
+        Check(!SiteGeoReference.TryProject(41.3, -81.75, "EPSG:32631", out _, out _), "Coordinates outside the named UTM zone are rejected");
+    }
+
+    private static void RecorderPersistence()
+    {
+        var recorder = Child("incremental recorder").AddComponent<DigitalTwinOperationRecorder>();
+        Set(recorder, "ingressBehaviour", _bridge);
+        Set(recorder, "flushIntervalSeconds", 0.25f);
+        recorder.StartRecording();
+        Check(!string.IsNullOrEmpty(recorder.LastSavedPath) && File.Exists(recorder.LastSavedPath), "Recording opens a JSONL file immediately");
+        string secret = Message("uav-main", "uav", 20, Telemetry(12));
+        recorder.RecordPayload("ingress", secret);
+        recorder.RecordPayload("ack", "{\"authToken\":\"simurgh-2026\",\"ok\":true}");
+        typeof(DigitalTwinOperationRecorder).GetField("_flushRequested", Hidden).SetValue(recorder, 1);
+        var deadline = DateTime.UtcNow.AddSeconds(2);
+        string disk = "";
+        while (DateTime.UtcNow < deadline)
+        {
+            System.Threading.Thread.Sleep(50);
+            try
+            {
+                if (new FileInfo(recorder.LastSavedPath).Length > 0)
+                {
+                    disk = File.ReadAllText(recorder.LastSavedPath);
+                    if (disk.Contains("uav-main")) break;
+                }
+            }
+            catch (IOException) { }
+        }
+        if (!disk.Contains("uav-main"))
+        {
+            recorder.StopRecording();
+            disk = File.ReadAllText(recorder.LastSavedPath);
+        }
+        Check(disk.Contains("uav-main") && !disk.Contains("simurgh-2026"), "Incremental write masks tokens without dropping the rest of the message");
+        recorder.StopRecording();
+        File.AppendAllText(recorder.LastSavedPath, "{\"type\":\"ingress\",\"timeMs\":999999,\"payload\":\"");
+        recorder.ReplayFromFile(recorder.LastSavedPath);
+        recorder.AdvanceReplay(5);
+        Check(recorder.ReplayApplied >= 1 && recorder.ReplayRejected >= 1, "A truncated last line does not prevent earlier records from replaying");
+        recorder.StopReplay();
+        recorder.StartRecording();
+        for (int i = 0; i < 40; i++) recorder.RecordPayload("ingress", Message("uav-main", "uav", 30 + i, Telemetry(10)));
+        var buffered = (System.Collections.ICollection)Get(recorder, "_entries");
+        Check(buffered.Count <= 500, "Recorder does not keep an unbounded in-memory copy of the session");
+        recorder.StopRecording();
     }
 
     private static void ExportAndSurvey()

@@ -47,6 +47,7 @@ namespace GroundStation.DigitalTwin
         [SerializeField] private float lowLinkQualityThreshold = 35f;
         [SerializeField] private float emergencyLinkQualityThreshold = 20f;
         [SerializeField] private float roverAvoidanceClearanceMeters = 6f;
+        [SerializeField] private float roverRadiusMeters = 0.4f;
         [SerializeField] private bool enableRoverReplan = true;
         [SerializeField] private int maxEventLogEntries = 120;
         [SerializeField] private int maxMeshSamples = 180;
@@ -54,6 +55,11 @@ namespace GroundStation.DigitalTwin
         private readonly Dictionary<string, GameObject> _obstacles = new Dictionary<string, GameObject>();
         private readonly Dictionary<string, GameObject> _targets = new Dictionary<string, GameObject>();
         private readonly Dictionary<string, GameObject> _voxels = new Dictionary<string, GameObject>();
+        private sealed class GeoDisk { public double Lat, Lon, RadiusM; }
+        private sealed class GeoPoint { public double Lat, Lon; }
+        private readonly Dictionary<string, GeoDisk> _obstacleGeo = new Dictionary<string, GeoDisk>();
+        private readonly Dictionary<string, GeoPoint> _targetGeo = new Dictionary<string, GeoPoint>();
+        private int _mapGeneration;
         private readonly Dictionary<string, float> _vehicleLastSeen = new Dictionary<string, float>();
         private readonly List<MissionEvent> _eventLog = new List<MissionEvent>();
         private readonly List<MeshSample> _meshHistory = new List<MeshSample>();
@@ -84,7 +90,11 @@ namespace GroundStation.DigitalTwin
         public bool EmergencyTwinOnly => _emergencyTwinOnly;
         public IReadOnlyList<MissionEvent> EventLog => _eventLog;
         public IReadOnlyList<Vector3> LastRoverDetour => _lastRoverDetour;
-        public bool HasRoverDetour => _lastRoverDetour.Count >= 3;
+        public RoverPlanResult LastRoverPlan { get; private set; }
+        public RoverPlanStatus LastRoverPlanStatus => LastRoverPlan != null ? LastRoverPlan.Status : RoverPlanStatus.None;
+        public string LastRoverPlanError => LastRoverPlan != null ? LastRoverPlan.Error : "";
+        public bool HasRoverDetour => LastRoverPlan != null && LastRoverPlan.Success && LastRoverPlan.Status == RoverPlanStatus.Detour
+            && LastRoverPlan.MapGeneration == _mapGeneration && _lastRoverDetour.Count >= 2;
 
         /// <summary>Mesh ornek gecmisi (sparkline/trend gorsellestirmesi icin).</summary>
         public IReadOnlyList<MeshSample> MeshHistory => _meshHistory;
@@ -243,6 +253,7 @@ namespace GroundStation.DigitalTwin
                 string op = string.IsNullOrEmpty(delta.operation) ? "upsert" : delta.operation.ToLowerInvariant();
                 if (op == "remove")
                 {
+                    if (_obstacleGeo.Remove(delta.id)) _mapGeneration++;
                     changed |= RemoveEntity(_obstacles, delta.id);
                     continue;
                 }
@@ -253,6 +264,8 @@ namespace GroundStation.DigitalTwin
                 if (go == null)
                     continue;
                 changed = true;
+                _mapGeneration++;
+                _obstacleGeo[delta.id] = new GeoDisk { Lat = delta.latitude, Lon = delta.longitude, RadiusM = delta.radiusM };
                 PlaceByGeo(go.transform, delta.latitude, delta.longitude, markerYOffset + 1f);
                 float size = Mathf.Max(0.6f, delta.radiusM > 0.01f ? delta.radiusM * 2f : obstacleDefaultSize);
                 go.transform.localScale = new Vector3(size, size, size);
@@ -292,69 +305,97 @@ namespace GroundStation.DigitalTwin
 
         private bool ComputeRoverDetourIfNeeded(DigitalTwinMessageV1 msg)
         {
-            if (!enableRoverReplan || !TwinVehicleTypes.IsRover(msg.vehicleType) || roverAdapter == null || !roverAdapter.HasRover)
+            if (!enableRoverReplan || !TwinVehicleTypes.IsRover(msg.vehicleType) || roverAdapter == null || !roverAdapter.HasRecentPose)
                 return false;
-            if (_targets.Count == 0)
-                return false;
-
-            Transform roverTr = roverAdapter.transform;
-            Vector3 roverPos = roverTr.position;
-            Vector3 targetPos = GetFirstTargetPosition();
-            if (targetPos == Vector3.zero)
+            if (!TryFirstTargetGeo(out double goalLat, out double goalLon))
                 return false;
 
-            var nearestObstacle = FindNearestObstacle(roverPos);
+            int generation = _mapGeneration;
+            var origin = roverAdapter.LastGeo;
+            if (!GeoFrames.TryWgs84ToEnu(origin.x, origin.y, goalLat, goalLon, out double goalEast, out double goalNorth))
+                return FailRoverPlan(generation, "Hedef coğrafi dönüşümü geçersiz");
+
+            var disks = new DiskObstacle[_obstacleGeo.Count];
+            int n = 0;
+            foreach (var kv in _obstacleGeo)
+            {
+                if (!GeoFrames.TryWgs84ToEnu(origin.x, origin.y, kv.Value.Lat, kv.Value.Lon, out double east, out double north))
+                    return FailRoverPlan(generation, "Engel coğrafi dönüşümü geçersiz");
+                disks[n++] = new DiskObstacle(east, north, kv.Value.RadiusM);
+            }
+
+            var request = new RoverPlanRequest
+            {
+                Start = new LocalMeterPoint(0, 0),
+                Goal = new LocalMeterPoint(goalEast, goalNorth),
+                Obstacles = disks,
+                RoverRadiusM = Mathf.Max(0.05f, roverRadiusMeters),
+                SafetyMarginM = Mathf.Max(0f, roverAvoidanceClearanceMeters),
+                MapGeneration = generation,
+                CellSizeM = 0.5,
+                MaxCells = 12000,
+                MaxMilliseconds = 80
+            };
+            var geofence = FindObjectOfType<DigitalTwinGeofence>();
+            if (geofence != null && geofence.HasCenter)
+            {
+                if (!GeoFrames.TryWgs84ToEnu(origin.x, origin.y, geofence.CenterLatitude, geofence.CenterLongitude, out double fenceE, out double fenceN))
+                    return FailRoverPlan(generation, "Saha sınırı dönüşümü geçersiz");
+                double r = geofence.RadiusMeters;
+                request.BoundsMinEast = fenceE - r;
+                request.BoundsMaxEast = fenceE + r;
+                request.BoundsMinNorth = fenceN - r;
+                request.BoundsMaxNorth = fenceN + r;
+            }
+
+            var plan = RoverLocalPlanner.Plan(request);
+            if (generation != _mapGeneration) return false;
+            LastRoverPlan = plan;
             _lastRoverDetour.Clear();
-            _lastRoverDetour.Add(roverPos);
-            if (nearestObstacle != null)
+            if (!plan.Success || plan.Path == null || plan.Path.Length < 2)
             {
-                Vector3 obsPos = nearestObstacle.transform.position;
-                float dist = Vector3.Distance(roverPos, obsPos);
-                if (dist < roverAvoidanceClearanceMeters * 1.6f)
-                {
-                    Vector3 away = (roverPos - obsPos);
-                    away.y = 0f;
-                    if (away.sqrMagnitude < 0.01f)
-                        away = Vector3.right;
-                    away.Normalize();
-                    Vector3 detour = obsPos + away * roverAvoidanceClearanceMeters;
-                    detour.y = roverPos.y;
-                    _lastRoverDetour.Add(detour);
-                    _lastRoverDetour.Add(targetPos);
-                    PushEvent("rover_replan", "detour_points=3");
-                    return true;
-                }
+                PushEvent("rover_replan", "blocked:" + plan.Error);
+                return true;
             }
 
-            _lastRoverDetour.Add(targetPos);
+            Transform roverTr = roverAdapter.RoverTransform != null ? roverAdapter.RoverTransform : roverAdapter.transform;
+            float y = roverTr != null ? roverTr.position.y : 0f;
+            for (int i = 0; i < plan.Path.Length; i++)
+            {
+                if (!GeoFrames.TryEnuToWgs84(origin.x, origin.y, plan.Path[i].East, plan.Path[i].North, out double lat, out double lon))
+                    return FailRoverPlan(generation, "Rota coğrafi dönüşümü geçersiz");
+                Vector3 world;
+                if (abstractMap != null)
+                {
+                    world = abstractMap.GeoToWorldPosition(new Vector2d(lat, lon), true);
+                    world.y = y;
+                }
+                else world = new Vector3((float)plan.Path[i].East, y, (float)plan.Path[i].North);
+                _lastRoverDetour.Add(world);
+            }
+            PushEvent("rover_replan", plan.Status + " points=" + plan.Path.Length + " gen=" + generation);
+            return true;
+        }
+
+        private bool FailRoverPlan(int generation, string error)
+        {
+            if (generation != _mapGeneration) return false;
+            LastRoverPlan = new RoverPlanResult { Success = false, Status = RoverPlanStatus.Blocked, Error = error, MapGeneration = generation };
+            _lastRoverDetour.Clear();
+            PushEvent("rover_replan", "blocked:" + error);
+            return true;
+        }
+
+        private bool TryFirstTargetGeo(out double lat, out double lon)
+        {
+            foreach (var kv in _targetGeo)
+            {
+                lat = kv.Value.Lat;
+                lon = kv.Value.Lon;
+                return DigitalTwinMessageValidation.Geo(lat, lon);
+            }
+            lat = lon = 0;
             return false;
-        }
-
-        private GameObject FindNearestObstacle(Vector3 origin)
-        {
-            GameObject best = null;
-            float bestDist = float.MaxValue;
-            foreach (var kv in _obstacles)
-            {
-                if (kv.Value == null) continue;
-                float d = Vector3.Distance(origin, kv.Value.transform.position);
-                if (d < bestDist)
-                {
-                    best = kv.Value;
-                    bestDist = d;
-                }
-            }
-            return best;
-        }
-
-        private Vector3 GetFirstTargetPosition()
-        {
-            foreach (var kv in _targets)
-            {
-                if (kv.Value != null)
-                    return kv.Value.transform.position;
-            }
-            return Vector3.zero;
         }
 
         /// <summary>
@@ -394,6 +435,7 @@ namespace GroundStation.DigitalTwin
                 string op = string.IsNullOrEmpty(delta.operation) ? "upsert" : delta.operation.ToLowerInvariant();
                 if (op == "remove")
                 {
+                    if (_targetGeo.Remove(delta.id)) _mapGeneration++;
                     changed |= RemoveEntity(_targets, delta.id);
                     _targetReachedState.Remove(delta.id);
                     _targetContents.Remove(delta.id);
@@ -430,6 +472,8 @@ namespace GroundStation.DigitalTwin
                 if (go == null)
                     continue;
                 changed = true;
+                _mapGeneration++;
+                _targetGeo[delta.id] = new GeoPoint { Lat = delta.latitude, Lon = delta.longitude };
                 float tSize = Mathf.Max(0.6f, targetDefaultSize);
                 PlaceByGeo(go.transform, delta.latitude, delta.longitude, markerYOffset + tSize);
                 go.transform.localScale = new Vector3(tSize * 0.55f, tSize, tSize * 0.55f);

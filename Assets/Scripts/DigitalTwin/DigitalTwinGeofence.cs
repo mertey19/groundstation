@@ -48,6 +48,8 @@ namespace GroundStation.DigitalTwin
         public bool HasPositionFix => (watchUav && _poseBridge != null && _poseBridge.HasRecentUavPose)
             || (watchRover && _rover != null && _rover.HasRecentPose);
         public float RadiusMeters => radiusMeters;
+        public double CenterLatitude => centerLat;
+        public double CenterLongitude => centerLon;
         /// <summary>(aracAdi, ihlalDurumu) — durum degisiminde tetiklenir.</summary>
         public event Action<string, bool> OnBreachChanged;
 

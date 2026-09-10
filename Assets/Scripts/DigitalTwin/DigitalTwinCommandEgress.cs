@@ -47,6 +47,8 @@ namespace GroundStation.DigitalTwin
             public float startedAt, sentAt;
             public int attempts;
             public bool accepted;
+            public string routeFingerprint;
+            public string source;
             public Action<bool> completion;
         }
         private readonly Dictionary<string, Pending> _pending = new Dictionary<string, Pending>();
@@ -103,15 +105,18 @@ namespace GroundStation.DigitalTwin
                     holdSeconds = w.metadata?.holdTimeSeconds ?? 0, action = w.metadata?.actionId ?? "" };
             }
             if (!TryResolveEndpoint("uav", out var originalEndpoint, out var originalSource)) return Fail("Doğrulanmış İHA bağlantısı yok");
+            string staged = Fingerprint(route);
             return Send("upload_route", "uav", 0, route, applied =>
             {
                 if (!applied) return;
                 if (!TryResolveEndpoint("uav", out var current, out var source) || !current.Equals(originalEndpoint) || source != originalSource)
                 { Fail("Rota yüklendi; bağlantı değiştiği için başlatılmadı"); return; }
+                if (Fingerprint(BuildRoute(data)) != staged)
+                { Fail("Rota değişti; eski yükleme onayı görevi başlatmadı"); return; }
                 SendCommand("start_mission");
-            });
+            }, staged);
         }
-        private bool Send(string command, string vehicle, float value, TwinRouteBlock route, Action<bool> completion)
+        private bool Send(string command, string vehicle, float value, TwinRouteBlock route, Action<bool> completion, string routeFingerprint = null)
         {
             Resolve();
             if (GroundStationMode.SimulationSelected || remoteState == null || remoteState.IsReplay || remoteState.IsSample)
@@ -132,7 +137,7 @@ namespace GroundStation.DigitalTwin
             byte[] bytes = Encoding.UTF8.GetBytes(Mapbox.Json.JsonConvert.SerializeObject(message));
             if (bytes.Length > 60000) return Fail("Rota tek paket sınırını aşıyor; waypoint sayısını azaltın");
             var pending = new Pending { message = message, endpoint = endpoint, bytes = bytes,
-                startedAt = Time.unscaledTime, completion = completion };
+                startedAt = Time.unscaledTime, completion = completion, source = source, routeFingerprint = routeFingerprint };
             _pending[message.commandId] = pending;
             LastCommandId = message.commandId;
             if (!Transmit(pending, Time.unscaledTime))
@@ -157,8 +162,13 @@ namespace GroundStation.DigitalTwin
             try { ack = Mapbox.Json.JsonConvert.DeserializeObject<VehicleCommandAck>(json); } catch { return; }
             if (ack == null || ack.type != "command_ack" || ack.schemaVersion != "1.0" || string.IsNullOrEmpty(ack.commandId)
                 || !_pending.TryGetValue(ack.commandId, out var pending) || sender == null || !sender.Address.Equals(pending.endpoint.Address)
-                || ack.authToken != authToken || ack.sourceId != pending.message.targetSourceId || ack.vehicleType != pending.message.vehicleType
-                || Math.Abs((double)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - ack.timestampMs) > 5000) return;
+                || ack.authToken != authToken || ack.sourceId != pending.message.targetSourceId || ack.vehicleType != pending.message.vehicleType)
+                return;
+            // Use the command timestamp plus elapsed unscaled time; a wall-clock jump must not
+            // accept an ACK that predates the command or reject a timely vehicle response.
+            if (ack.timestampMs + 30000 < pending.message.timestampMs) return;
+            double elapsedMs = Math.Max(0, (Time.unscaledTime - pending.startedAt) * 1000.0);
+            if (ack.timestampMs > pending.message.timestampMs + elapsedMs + 5000) return;
             if (ack.status == "accepted")
             { pending.accepted = true; Publish(pending, VehicleCommandStatus.Accepted, "Araç aldı · uygulama sonucu bekleniyor"); }
             else if (ack.status == "applied") Finish(pending, VehicleCommandStatus.Applied, "Araç uyguladı");
@@ -170,6 +180,9 @@ namespace GroundStation.DigitalTwin
             { CancelPending("Mod değişti; bekleyen işlem iptal edildi"); return; }
             foreach (var pending in new List<Pending>(_pending.Values))
             {
+                if (!TryResolveEndpoint(pending.message.vehicleType, out var current, out var source)
+                    || !current.Address.Equals(pending.endpoint.Address) || source != pending.source)
+                { Finish(pending, VehicleCommandStatus.Cancelled, "Kaynak veya oturum değişti; araç sonucu bilinmiyor"); continue; }
                 if (now - pending.startedAt >= 10f) Finish(pending, VehicleCommandStatus.TimedOut, "ONAY ALINAMADI · araç sonucu bilinmiyor");
                 else if (!pending.accepted && pending.attempts < 3 && now - pending.sentAt >= 2f)
                     Transmit(pending, now); // Same ID and payload; receiver must deduplicate.
@@ -192,6 +205,30 @@ namespace GroundStation.DigitalTwin
             OnCommandStatus?.Invoke(new VehicleCommandResult { command = pending.message, status = status, message = message });
         }
         private bool Fail(string message) { LastCommandInfo = message; LastStatus = VehicleCommandStatus.Rejected; return false; }
+        private static TwinRouteBlock BuildRoute(RouteData data)
+        {
+            if (data?.waypoints == null) return new TwinRouteBlock { waypoints = Array.Empty<TwinRouteWaypoint>() };
+            var route = new TwinRouteBlock { waypoints = new TwinRouteWaypoint[data.Count] };
+            for (int i = 0; i < data.Count; i++)
+            {
+                var w = data.waypoints[i];
+                if (w == null) continue;
+                route.waypoints[i] = new TwinRouteWaypoint { index = i, latitude = w.latitude, longitude = w.longitude, altitudeM = w.targetAltitude };
+            }
+            return route;
+        }
+        private static string Fingerprint(TwinRouteBlock route)
+        {
+            if (route?.waypoints == null) return "";
+            var sb = new StringBuilder();
+            for (int i = 0; i < route.waypoints.Length; i++)
+            {
+                var w = route.waypoints[i];
+                if (w == null) continue;
+                sb.Append(w.latitude.ToString("R")).Append(',').Append(w.longitude.ToString("R")).Append(',').Append(w.altitudeM.ToString("R")).Append(';');
+            }
+            return sb.ToString();
+        }
         private static string Label(string command)
         {
             switch (command)

@@ -375,7 +375,9 @@ namespace GroundStation.DigitalTwin
                     remoteState.SetVehicleStatusLine(missionEngine.BuildVehicleStatusLine());
                     remoteState.SetMissionPhaseAndStatus(missionEngine.CurrentPhase, missionEngine.CurrentPhaseStatus);
                     if (missionEngine.HasRoverDetour)
-                        remoteState.SetWarning("Uyari: Rover için dinamik kaçınma rotası üretildi.");
+                        remoteState.SetWarning("Uyarı: Rover kaçınma rotası üretildi; araca gönderilmedi.");
+                    else if (missionEngine.LastRoverPlanStatus == RoverPlanStatus.Blocked && !string.IsNullOrEmpty(missionEngine.LastRoverPlanError))
+                        remoteState.SetWarning("Rover için geçerli rota bulunamadı.");
                 }
             }
 

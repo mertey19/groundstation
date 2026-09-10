@@ -51,7 +51,7 @@ namespace GroundStation.DigitalTwin
         private void RefreshLine()
         {
             var points = missionEngine.LastRoverDetour;
-            if (points == null || points.Count < 2)
+            if (points == null || points.Count < 2 || missionEngine.LastRoverPlanStatus == RoverPlanStatus.Blocked)
             {
                 _line.positionCount = 0;
                 return;

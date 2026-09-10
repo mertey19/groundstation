@@ -56,7 +56,21 @@ Onay, yer istasyonunun **19090** dinleme portuna gönderilir; komutun geçici g�
 
 `accepted` yalnızca alındığını; `applied` uçuş kontrolcüsünde uygulandığını; `rejected` reddedildiğini ifade eder. Yer istasyonu IP, araç, kaynak, token, komut kimliği ve onay zamanını denetler. On saniye içinde uygulama sonucu gelmezse sonuç **bilinmiyor** gösterilir. Gönderim en çok üç kez, aynı kimlik ve aynı içerikle denenir; `accepted` geldikten sonra yeniden gönderim durur. Alıcı `commandId` için tekrarları ayıklamalı, aynı komutu yeniden uygulamadan önceki sonucu döndürmelidir.
 
-Rota yüklemesi `applied` olmadan `start_mission` gönderilmez. Bekle/RTL/acil dur, mod değişikliği veya planı temizleme bekleyen başlatma zincirini iptal eder; geç gelen rota onayı görevi yeniden başlatmaz. İptal, araca daha önce ulaşmış bir komutun fiziksel olarak geri alındığını ifade etmez.
+Rota yüklemesi `applied` olmadan `start_mission` gönderilmez. Yerel rota, yüklenen içerikle aynı parmak izine sahip değilse geç gelen `applied` onayı görevi başlatmaz. Bekle/RTL/acil dur, mod değişikliği, kaynak/oturum değişimi veya planı temizleme bekleyen başlatma zincirini iptal eder; geç gelen rota onayı görevi yeniden başlatmaz. İptal, araca daha önce ulaşmış bir komutun fiziksel olarak geri alındığını ifade etmez.
+
+Onay zaman damgası komutun kendi zamanına ve yer istasyonunun `unscaledTime` gecikmesine göre yorumlanır. Komuttan çok eski bir onay yok sayılır; sistem saati sıçraması tek başına zamanında gelen onayı düşürmez.
+
+## Kayıt dayanıklılığı
+
+`DigitalTwinOperationRecorder` kabul edilen mesajları JSONL dosyasına artımlı yazar. Bellekte en fazla 500 satır tutulur; asıl kayıt disktir. Yaklaşık bir saniyelik flush aralığı vardır. Güç kaybında son flush edilmemiş satır kaybolabilir; önceki tam satırlar okunabilir kalır. `authToken` diske yazılmadan çıkarılır. Oynatma canlı kimlik doğrulamasını gevşetmez; ayrı replay bağlamı kullanır.
+
+## Yerel araç emülatörü
+
+`Tools/VehicleEmulator/vehicle_emulator.py` yalnızca 127.0.0.1 üzerinde dinler. Telemetri üretir, komut sözleşmesini ayrıştırır, `accepted`/`applied`/`rejected` döner, aynı `commandId` tekrarlarını ayıklar ve farklı gövdeyi reddeder. Desteklenmeyen komuta sahte başarı dönmez. Emülatör testi uçuş kontrolcüsü veya donanım entegrasyonu değildir.
+
+```text
+python Tools/VehicleEmulator/test_vehicle_emulator.py
+```
 
 ## SQLite kaynağı
 

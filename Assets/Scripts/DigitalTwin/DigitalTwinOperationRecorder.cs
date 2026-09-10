@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
 using UnityEngine;
 
 namespace GroundStation.DigitalTwin
@@ -14,19 +18,32 @@ namespace GroundStation.DigitalTwin
         [SerializeField] private bool autoRecordOnEnable;
         [SerializeField] private string filePrefix = "digital_twin_log";
         [SerializeField, Range(0.25f, 4f)] private float replaySpeed = 1f;
+        [SerializeField, Range(0.25f, 10f)] private float flushIntervalSeconds = 1f;
+        [SerializeField] private int maxQueuedLines = 2000;
+        [SerializeField] private int maxFileBytes = 32 * 1024 * 1024;
         private readonly List<LogEntry> _entries = new List<LogEntry>();
         private readonly List<LogEntry> _playback = new List<LogEntry>();
+        private readonly ConcurrentQueue<string> _writeQueue = new ConcurrentQueue<string>();
         private DigitalTwinJsonPoseBridge _bridge;
         private bool _recording;
         private string _lastSavedPath = "";
         private int _cursor;
         private long _origin;
         private float _startedAt;
+        private float _nextFlush;
+        private Thread _writer;
+        private StreamWriter _stream;
+        private volatile bool _writeRunning;
+        private volatile string _ioError = "";
+        private long _bytesWritten;
+        private int _dropped;
         public int ReplayApplied { get; private set; }
         public int ReplayRejected { get; private set; }
         public bool IsReplaying { get; private set; }
         public string LastReplayInfo { get; private set; } = "";
         public string LastSavedPath => _lastSavedPath;
+        public int DroppedRecordCount => _dropped;
+        public string LastIoError => _ioError;
         private void Awake()
         {
             if (udpIngress == null) udpIngress = FindObjectOfType<DigitalTwinUdpIngress>();
@@ -54,15 +71,65 @@ namespace GroundStation.DigitalTwin
                 udpIngress.OnAckSent -= OnAckSent;
             }
             StopReplay();
+            CloseWriter(true);
         }
-        private void Update() { if (IsReplaying) AdvanceReplay((Time.unscaledTime - _startedAt) * replaySpeed); }
+        private void Update()
+        {
+            if (IsReplaying) AdvanceReplay((Time.unscaledTime - _startedAt) * replaySpeed);
+            if (_recording && !string.IsNullOrEmpty(_ioError))
+            {
+                _recording = false;
+                LastReplayInfo = _ioError;
+            }
+            if (_recording && Time.unscaledTime >= _nextFlush)
+            {
+                _nextFlush = Time.unscaledTime + Mathf.Max(0.25f, flushIntervalSeconds);
+                Volatile.Write(ref _flushRequested, 1);
+            }
+        }
+        private int _flushRequested;
         [ContextMenu("Start Recording")]
-        public void StartRecording() { _entries.Clear(); _recording = true; }
+        public void StartRecording()
+        {
+            CloseWriter(true);
+            _entries.Clear();
+            _dropped = 0;
+            _ioError = "";
+            _bytesWritten = 0;
+            try
+            {
+                string dir = Path.Combine(Application.persistentDataPath, "digital-twin-logs");
+                Directory.CreateDirectory(dir);
+                string path = Path.Combine(dir, Path.GetFileName(filePrefix) + "_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff") + ".jsonl");
+                _stream = new StreamWriter(new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.ReadWrite), new UTF8Encoding(false)) { AutoFlush = false };
+                _lastSavedPath = path;
+                _writeRunning = true;
+                _writer = new Thread(WriteLoop) { IsBackground = true, Name = "Simurgh recorder" };
+                _writer.Start();
+                _recording = true;
+                LastReplayInfo = "Kayıt dosyasına yazılıyor: " + path;
+            }
+            catch (Exception e)
+            {
+                _recording = false;
+                LastReplayInfo = "Kayıt dosyası açılamadı: " + e.Message;
+            }
+        }
         [ContextMenu("Stop Recording")]
-        public void StopRecording() => _recording = false;
+        public void StopRecording()
+        {
+            _recording = false;
+            CloseWriter(true);
+        }
         [ContextMenu("Save Recording")]
         public void SaveRecording()
         {
+            if (_recording && !string.IsNullOrEmpty(_lastSavedPath))
+            {
+                Volatile.Write(ref _flushRequested, 1);
+                LastReplayInfo = "Artımlı kayıt: " + _lastSavedPath + " (son satır güç kaybında kaybolabilir)";
+                return;
+            }
             if (_entries.Count == 0) { LastReplayInfo = "Kaydedilecek veri yok"; return; }
             try
             {
@@ -107,7 +174,6 @@ namespace GroundStation.DigitalTwin
             _origin = _playback[0].timeMs; _startedAt = Time.unscaledTime; IsReplaying = true;
             AdvanceReplay(0);
         }
-        // Deterministic playback clock; also used by editor regression fixtures.
         public void AdvanceReplay(float elapsedSeconds)
         {
             if (!IsReplaying || _bridge == null) return;
@@ -119,7 +185,7 @@ namespace GroundStation.DigitalTwin
             }
             if (_cursor == _playback.Count)
             {
-                IsReplaying = false; // Keep REPLAY mode and its isolated snapshot until explicit exit.
+                IsReplaying = false;
                 LastReplayInfo = "Kayıt tamamlandı · " + ReplayApplied + " uygulandı, " + ReplayRejected + " reddedildi";
             }
             else LastReplayInfo = "Kayıt oynatılıyor · " + ReplayApplied + "/" + _playback.Count;
@@ -130,14 +196,74 @@ namespace GroundStation.DigitalTwin
             IsReplaying = false;
             if (_bridge != null && _bridge.IsReplaying) _bridge.EndReplay();
         }
+        public void RecordPayload(string type, string payload) => Record(type, payload);
         private void OnJsonReceived(string json) => Record("ingress", json);
         private void OnAckSent(string json) => Record("ack", json);
         private void Record(string type, string payload)
         {
             if (!_recording || string.IsNullOrEmpty(payload)) return;
-            if (_entries.Count >= 100000) { _recording = false; LastReplayInfo = "Kayıt sınırına ulaşıldı; kaydı dosyaya yazın"; return; }
-            _entries.Add(new LogEntry { type = type, timeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), payload = payload });
+            var entry = new LogEntry { type = type, timeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), payload = MaskSecrets(payload) };
+            if (_entries.Count < 500) _entries.Add(entry);
+            if (_writeQueue.Count >= Math.Max(32, maxQueuedLines))
+            {
+                _dropped++;
+                LastReplayInfo = "Kayıt kuyruğu doldu; satır düşürüldü";
+                return;
+            }
+            _writeQueue.Enqueue(Mapbox.Json.JsonConvert.SerializeObject(entry));
+        }
+        internal static string MaskSecrets(string payload)
+        {
+            if (string.IsNullOrEmpty(payload)) return payload;
+            return Regex.Replace(payload, "\"authToken\"\\s*:\\s*\"[^\"]*\"", "\"authToken\":\"\"");
+        }
+        private void WriteLoop()
+        {
+            while (_writeRunning || !_writeQueue.IsEmpty)
+            {
+                while (_writeQueue.TryDequeue(out var line))
+                {
+                    try
+                    {
+                        if (_stream == null) return;
+                        if (_bytesWritten + line.Length + 2 > Math.Max(1024, maxFileBytes))
+                        {
+                            _ioError = "Kayıt dosyası boyut sınırına ulaştı";
+                            _writeRunning = false;
+                            return;
+                        }
+                        _stream.WriteLine(line);
+                        _bytesWritten += line.Length + 1;
+                    }
+                    catch (Exception e)
+                    {
+                        _ioError = "Kayıt diske yazılamadı: " + e.Message;
+                        _writeRunning = false;
+                        return;
+                    }
+                }
+                if (Volatile.Read(ref _flushRequested) != 0)
+                {
+                    try { _stream?.Flush(); } catch (Exception e) { _ioError = "Kayıt flush başarısız: " + e.Message; _writeRunning = false; return; }
+                    Volatile.Write(ref _flushRequested, 0);
+                }
+                if (_writeRunning) Thread.Sleep(15);
+            }
+        }
+        private void CloseWriter(bool flush)
+        {
+            _writeRunning = false;
+            var writer = _writer;
+            _writer = null;
+            if (writer != null && writer.IsAlive)
+                try { writer.Join(500); } catch { }
+            if (flush)
+            {
+                try { _stream?.Flush(); } catch { }
+            }
+            try { _stream?.Dispose(); } catch { }
+            _stream = null;
+            while (_writeQueue.TryDequeue(out _)) { }
         }
     }
 }
-

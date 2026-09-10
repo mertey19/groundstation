@@ -22,3 +22,5 @@ Recordings/
 *.VC.db
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc

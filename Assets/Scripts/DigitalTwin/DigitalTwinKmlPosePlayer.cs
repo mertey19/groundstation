@@ -136,7 +136,7 @@ namespace GroundStation.DigitalTwin
                 };
 
                 string json = JsonUtility.ToJson(msg);
-                bridge.TryApplyDigitalTwinJson(json);
+                bridge.TryApplySampleJson(json);
 
                 yield return new WaitForSecondsRealtime(Mathf.Max(0.05f, secondsPerPoint));
 

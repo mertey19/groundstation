@@ -135,7 +135,7 @@ namespace GroundStation.DigitalTwin
             {
                 if (_ingress == null) _ingress = ingressBehaviour as IDigitalTwinIngress;
                 if (_ingress != null)
-                    _ingress.TryApplyDigitalTwinJson(frames[i]);
+                    (_ingress as DigitalTwinJsonPoseBridge)?.TryApplySampleJson(frames[i]);
 
                 yield return new WaitForSecondsRealtime(Mathf.Max(0.05f, intervalSeconds));
             }
@@ -375,8 +375,8 @@ namespace GroundStation.DigitalTwin
         {
             if (msg != null && msg.route != null && msg.route.waypoints != null && msg.route.waypoints.Length > 0)
             {
-                float latSum = 0f;
-                float lonSum = 0f;
+                double latSum = 0d;
+                double lonSum = 0d;
                 int count = 0;
                 for (int i = 0; i < msg.route.waypoints.Length; i++)
                 {
@@ -386,7 +386,7 @@ namespace GroundStation.DigitalTwin
                 }
                 if (count > 0)
                 {
-                    center = new Vector2(latSum / count, lonSum / count);
+                    center = new Vector2((float)(latSum / count), (float)(lonSum / count));
                     return true;
                 }
             }

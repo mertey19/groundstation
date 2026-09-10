@@ -5869,7 +5869,7 @@ MonoBehaviour:
   surveyPlanner: {fileID: 323967386}
   mapClickSpawner: {fileID: 445739883}
   showSelectionRectangle: 1
-  showRuntimeDebugStatus: 1
+  showRuntimeDebugStatus: 0
   previewLineWidth: 0.35
   minPreviewLineWidth: 0.2
   maxPreviewLineWidth: 0.65

@@ -1,3 +1,4 @@
+using GroundStation.DigitalTwin;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -25,6 +26,7 @@ namespace GroundStation.Drone
         [SerializeField] private Text flightDurationText;
         [SerializeField] private Text fpsText;
 
+        [SerializeField] private DigitalTwinRemoteState remoteState;
         private float _fpsSmoothed;
         private float _fpsAccum;
         private int _fpsFrames;
@@ -63,52 +65,33 @@ namespace GroundStation.Drone
         {
             UpdateFps();
 
-            if (drone == null) return;
-
-            if (droneTransform == null && drone != null)
-                droneTransform = drone.transform;
-
-            if (droneTransform == null) return;
-
-            float worldY = droneTransform.position.y;
-            float altitude = worldY - groundLevel;
-
-            float speed = drone.CurrentSpeed;
-            int wpIndex = drone.CurrentWaypointIndex;
-            bool running = drone.IsRunning;
-
-            if (altitudeText != null)
+            if (remoteState == null) remoteState = FindObjectOfType<DigitalTwinRemoteState>();
+            bool remote = remoteState != null && (GroundStationMode.IsLive(remoteState) || remoteState.IsReplay || remoteState.IsSample);
+            if (remote)
             {
-                _lastAltitudeText = string.Format("Y\u00FCkseklik: {0:F1} m", altitude);
-                altitudeText.text = _lastAltitudeText;
+                bool fresh = remoteState.HasFreshTelemetry;
+                _lastAltitudeText = fresh ? remoteState.LastAltitudeText : "Yükseklik: —";
+                _lastSpeedText = fresh ? remoteState.LastSpeedText : "Hız: —";
+                string context = remoteState.IsReplay ? "KAYIT" : remoteState.IsSample ? "ÖRNEK" : "CANLI İHA";
+                _lastModeText = context + " · " + (fresh ? remoteState.LastModeText : "VERİ GÜNCEL DEĞİL");
+                _lastWaypointText = fresh ? remoteState.LastWaypointText : "WP: —";
+                _lastFlightDurationText = "Kaynak: " + remoteState.LastSourceId;
             }
-
-            if (speedText != null)
+            else
             {
-                _lastSpeedText = string.Format("H\u0131z: {0:F1} m/s", speed);
-                speedText.text = _lastSpeedText;
+                if (droneTransform == null && drone != null) droneTransform = drone.transform;
+                _lastAltitudeText = droneTransform != null ? string.Format("Yükseklik: {0:F1} m", droneTransform.position.y - groundLevel) : "Yükseklik: —";
+                _lastSpeedText = drone != null ? string.Format("Hız: {0:F1} m/s", drone.CurrentSpeed) : "Hız: —";
+                _lastModeText = "SİMÜLASYON · " + (drone != null && drone.IsRunning ? "ROTA" : "HAZIR");
+                _lastWaypointText = drone != null ? "WP: " + drone.CurrentWaypointIndex : "WP: —";
+                float sec = drone != null ? drone.FlightDurationSeconds : 0;
+                _lastFlightDurationText = string.Format("Süre: {0:D2}:{1:D2}", (int)(sec / 60), (int)(sec % 60));
             }
-
-            if (modeText != null)
-            {
-                _lastModeText = running ? "Mod: GUIDED (Route)" : "Mod: IDLE";
-                modeText.text = _lastModeText;
-            }
-
-            if (waypointIndexText != null)
-            {
-                _lastWaypointText = string.Format("WP Index: {0}", wpIndex);
-                waypointIndexText.text = _lastWaypointText;
-            }
-
-            float flightSec = drone.FlightDurationSeconds;
-            if (flightDurationText != null)
-            {
-                int minutes = (int)(flightSec / 60f);
-                int seconds = (int)(flightSec % 60f);
-                _lastFlightDurationText = string.Format("U\u00E7u\u015F: {0:D2}:{1:D2}", minutes, seconds);
-                flightDurationText.text = _lastFlightDurationText;
-            }
+            if (altitudeText != null) altitudeText.text = _lastAltitudeText;
+            if (speedText != null) speedText.text = _lastSpeedText;
+            if (modeText != null) modeText.text = _lastModeText;
+            if (waypointIndexText != null) waypointIndexText.text = _lastWaypointText;
+            if (flightDurationText != null) flightDurationText.text = _lastFlightDurationText;
         }
 
         private void UpdateFps()

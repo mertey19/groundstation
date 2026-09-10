@@ -106,12 +106,17 @@ namespace Mapbox.Unity.MeshGeneration.Factories.TerrainStrategies
 			GenerateTerrainMesh(tile);
 		}
 
+        public override void PrepareTile(UnityTile tile)
+        {
+            ResetToFlatMesh(tile);
+        }
+
 		public override void UnregisterTile(UnityTile tile)
 		{
 			_meshData.Remove(tile.UnwrappedTileId);
 			if (_dataArrays.ContainsKey(tile.UnwrappedTileId))
 			{
-				_cachedMeshDataArrays.Add(tile, _dataArrays[tile.UnwrappedTileId]);
+				_cachedMeshDataArrays[tile] = _dataArrays[tile.UnwrappedTileId];
 				_dataArrays.Remove(tile.UnwrappedTileId);
 			}
 		}
@@ -234,9 +239,17 @@ namespace Mapbox.Unity.MeshGeneration.Factories.TerrainStrategies
 
 		private void ResetToFlatMesh(UnityTile tile)
 		{
-			if (tile.MeshFilter.sharedMesh.vertexCount == 0)
+			if (tile.MeshFilter.sharedMesh.vertexCount != RequiredVertexCount)
 			{
-				CreateBaseMesh(tile, _elevationOptions.modificationOptions.sampleCount);
+                // CreateBaseMesh returns CPU data; it does not assign the Unity mesh.
+                // Discarding that result left a permanent hole after a failed download.
+                var flat = CreateBaseMesh(tile, _elevationOptions.modificationOptions.sampleCount);
+                var mesh = tile.MeshFilter.sharedMesh;
+                mesh.Clear();
+                mesh.vertices = flat.Vertices;
+                mesh.normals = flat.Normals;
+                mesh.triangles = flat.Triangles;
+                mesh.uv = flat.Uvs;
 			}
 			else
 			{
@@ -256,8 +269,16 @@ namespace Mapbox.Unity.MeshGeneration.Factories.TerrainStrategies
 				tile.MeshFilter.sharedMesh.SetVertices(_currentTileMeshData.Vertices);
 				tile.MeshFilter.sharedMesh.SetNormals(_currentTileMeshData.Normals);
 
-				tile.MeshFilter.sharedMesh.RecalculateBounds();
 			}
+            tile.MeshFilter.sharedMesh.RecalculateBounds();
+            tile.ElevationType = TileTerrainType.Flat;
+            if (tile.HeightData != null) System.Array.Clear(tile.HeightData, 0, tile.HeightData.Length);
+            if (_elevationOptions.colliderOptions.addCollider)
+            {
+                var collider = tile.GetComponent<MeshCollider>();
+                if (collider == null) collider = tile.gameObject.AddComponent<MeshCollider>();
+                collider.sharedMesh = tile.MeshFilter.sharedMesh;
+            }
 		}
 
 		/// <summary>

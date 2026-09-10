@@ -124,20 +124,22 @@ public class MapCameraController : MonoBehaviour
 
         private void Update()
         {
-            float h = Input.GetAxisRaw("Horizontal");
-            float v = Input.GetAxisRaw("Vertical");
+            bool editingText = GroundStation.UI.HudInputBlocker.IsEditingText;
+            bool overUI = GroundStation.UI.HudInputBlocker.IsPointerOverUI();
+            float h = editingText ? 0f : Input.GetAxisRaw("Horizontal");
+            float v = editingText ? 0f : Input.GetAxisRaw("Vertical");
             Vector3 move = new Vector3(h, 0f, v).normalized * moveSpeed * Time.deltaTime;
             transform.Translate(move, Space.World);
 
             // Sag tus surukle: haritayi saga-sola / ileri-geri kaydir (pan). WASD'ye ek sezgisel kontrol.
-            if (Input.GetMouseButton(1))
+            if (Input.GetMouseButton(1) && !overUI && !editingText)
             {
                 float k = Mathf.Max(1.2f, transform.position.y * 0.0026f) * mouseDragPanSpeed;
                 Vector3 drag = new Vector3(-Input.GetAxis("Mouse X"), 0f, -Input.GetAxis("Mouse Y")) * k;
                 transform.Translate(drag, Space.World);
             }
 
-            float scroll = Input.GetAxis("Mouse ScrollWheel");
+            float scroll = overUI || editingText ? 0f : Input.GetAxis("Mouse ScrollWheel");
             if (Mathf.Abs(scroll) > 0.0001f)
             {
                 ApplyZoomInput(scroll);

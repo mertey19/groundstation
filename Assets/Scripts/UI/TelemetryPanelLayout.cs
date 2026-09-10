@@ -43,7 +43,7 @@ namespace GroundStation.UI
             vlg.childControlWidth = true;
             vlg.childForceExpandHeight = false;
             vlg.childForceExpandWidth = true;
-            vlg.padding = new RectOffset((int)paddingLeft, (int)paddingTop, (int)paddingRight, (int)paddingBottom);
+            vlg.padding = new RectOffset((int)paddingLeft, (int)paddingRight, (int)paddingTop, (int)paddingBottom);
 
             if (!applyTextAlignment) return;
 

@@ -27,7 +27,8 @@ namespace GroundStation.DigitalTwin
 
         private Vector2 _hudPos = new Vector2(-99999f, 0f);
         private bool _drag;
-        private float _rtlHold, _stopHold;
+        private readonly GroundStation.UI.HoldToConfirm _rtlHold = new GroundStation.UI.HoldToConfirm();
+        private readonly GroundStation.UI.HoldToConfirm _stopHold = new GroundStation.UI.HoldToConfirm();
         private float _nextResolveAt;
         private GUIStyle _bannerStyle, _rowStyle;
 
@@ -38,6 +39,9 @@ namespace GroundStation.DigitalTwin
         {
             ResolveRefs();
         }
+
+        private void OnDisable() { _rtlHold.Reset(); _stopHold.Reset(); }
+        private void OnApplicationFocus(bool focused) { if (!focused) OnDisable(); }
 
         private void Update()
         {
@@ -61,32 +65,36 @@ namespace GroundStation.DigitalTwin
             if (!showHud || remoteState == null) return;
             TwinHudTheme.BeginScaledHud();
 
-            float w = TwinHudTheme.RightPanelWidth, h = 236f;
+            bool hasData = remoteState.HasFreshMessage;
+            float w = TwinHudTheme.RightPanelWidth, h = hasData ? 258f : 158f;
             Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Right, w, h, "twinhud_safety_v4");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 14f, y = r.y + 12f;
-            GUI.Label(new Rect(x, y, w - 28f, 18f), "UÇUŞ GÜVENLİĞİ", TwinHudTheme.Title);
+            GUI.Label(new Rect(x, y, w - 28f, 18f), "İHA · UÇUŞ GÜVENLİĞİ", TwinHudTheme.Title);
             y += 23f;
             TwinHudTheme.Separator(x, y, w - 28f);
             y += 8f;
 
             // --- Durum degerlendirmesi ---
-            string mode = ExtractMode(remoteState.LastModeText);
+            string mode = remoteState.HasFreshTelemetry ? ExtractMode(remoteState.LastModeText) : "";
             bool rtl = IsRtlMode(mode);
-            float link = remoteState.HasMeshStatus ? remoteState.LastMeshStatus.linkQualityPercent : -1f;
+            float link = remoteState.HasFreshMesh ? remoteState.LastMeshStatus.linkQualityPercent : -1f;
             bool lowLink = link >= 0f && link < lowLinkThreshold;
-            float batt = remoteState.LastBatteryPercent;
+            float batt = remoteState.HasFreshBattery ? remoteState.LastBatteryPercent : -1f;
             bool battWarn = batt >= 0f && batt < lowBatteryThreshold;
             bool battCritical = batt >= 0f && batt < criticalBatteryThreshold;
-            bool fenceBreach = geofence != null && geofence.AnyBreached;
+            bool fenceKnown = geofence != null && geofence.HasCenter && geofence.HasUavPositionFix;
+            bool fenceBreach = fenceKnown && geofence.UavBreached;
 
             string statusTxt; Color statusCol;
-            if (rtl) { statusTxt = "EVE DÖNÜŞ (RTL) AKTİF"; statusCol = TwinHudTheme.Bad; }
+            if (!hasData) { statusTxt = "TELEMETRİ BEKLENİYOR"; statusCol = TwinHudTheme.TextSecondary; }
+            else if (rtl) { statusTxt = "EVE DÖNÜŞ (RTL) AKTİF"; statusCol = TwinHudTheme.Bad; }
             else if (fenceBreach) { statusTxt = "SAHA DIŞI — İHLAL"; statusCol = TwinHudTheme.Bad; }
             else if (battCritical) { statusTxt = "BATARYA KRİTİK"; statusCol = TwinHudTheme.Bad; }
             else if (lowLink) { statusTxt = "UYARI · SİNYAL ZAYIF"; statusCol = TwinHudTheme.Warn; }
             else if (battWarn) { statusTxt = "UYARI · BATARYA DÜŞÜK"; statusCol = TwinHudTheme.Warn; }
+            else if (link < 0f || batt < 0f || !fenceKnown) { statusTxt = "EKSİK TELEMETRİ"; statusCol = TwinHudTheme.Warn; }
             else { statusTxt = "NORMAL"; statusCol = TwinHudTheme.Good; }
 
             var sBar = new Rect(x, y, w - 28f, 26f);
@@ -98,48 +106,57 @@ namespace GroundStation.DigitalTwin
 
             if (_rowStyle == null) _rowStyle = new GUIStyle(TwinHudTheme.Small);
 
-            // --- Uc tetikleyici ayri satirlar ---
-            DrawStatusRow(x, ref y, w, "Sinyal",
-                link < 0f ? "—" : string.Format(CultureInfo.InvariantCulture, "%{0:F0}", link),
-                link < 0f ? TwinHudTheme.TextSecondary : TwinHudTheme.Quality(link));
-
-            Color battCol = batt < 0f ? TwinHudTheme.TextSecondary : (battCritical ? TwinHudTheme.Bad : (battWarn ? TwinHudTheme.Warn : TwinHudTheme.Good));
-            DrawStatusRow(x, ref y, w, "Batarya",
-                batt < 0f ? "—" : string.Format(CultureInfo.InvariantCulture, "%{0:F0}{1}", batt,
-                    remoteState.LastBatteryVoltage > 0f ? string.Format(CultureInfo.InvariantCulture, " · {0:F1} V", remoteState.LastBatteryVoltage) : ""),
-                battCol);
-            if (batt >= 0f)
+            if (hasData)
             {
-                var bar = new Rect(x + 70f, y - 6f, w - 98f, 5f);
-                TwinHudTheme.Fill(bar, new Color(1f, 1f, 1f, 0.10f), 2.5f);
-                TwinHudTheme.Fill(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(batt / 100f), bar.height), battCol, 2.5f);
-                y += 5f;
+
+                // --- Uc tetikleyici ayri satirlar ---
+                DrawStatusRow(x, ref y, w, "Sinyal",
+                    link < 0f ? "—" : string.Format(CultureInfo.InvariantCulture, "%{0:F0}", link),
+                    link < 0f ? TwinHudTheme.TextSecondary : TwinHudTheme.Quality(link));
+
+                Color battCol = batt < 0f ? TwinHudTheme.TextSecondary : (battCritical ? TwinHudTheme.Bad : (battWarn ? TwinHudTheme.Warn : TwinHudTheme.Good));
+                DrawStatusRow(x, ref y, w, "Batarya",
+                    batt < 0f ? "—" : string.Format(CultureInfo.InvariantCulture, "%{0:F0}{1}", batt,
+                        remoteState.LastBatteryVoltage > 0f ? string.Format(CultureInfo.InvariantCulture, " · {0:F1} V", remoteState.LastBatteryVoltage) : ""),
+                    battCol);
+                if (batt >= 0f)
+                {
+                    var bar = new Rect(x + 70f, y - 6f, w - 98f, 5f);
+                    TwinHudTheme.Fill(bar, new Color(1f, 1f, 1f, 0.10f), 2.5f);
+                    TwinHudTheme.Fill(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(batt / 100f), bar.height), battCol, 2.5f);
+                    y += 5f;
+                }
+
+                string fenceTxt = !fenceKnown ? "konum bekleniyor"
+                    : (fenceBreach ? "SAHA DIŞI!" : string.Format(CultureInfo.InvariantCulture, "içinde (r={0:F0} m)", geofence.RadiusMeters));
+                DrawStatusRow(x, ref y, w, "Saha", fenceTxt,
+                    !fenceKnown ? TwinHudTheme.TextSecondary : (fenceBreach ? TwinHudTheme.Bad : TwinHudTheme.Good));
+
+                GUI.Label(new Rect(x, y, w - 28f, 16f),
+                    "Uçuş modu: <b>" + (string.IsNullOrEmpty(mode) ? "—" : mode) + "</b>",
+                    TwinHudTheme.Small);
+                y += 22f;
             }
-
-            string fenceTxt = geofence == null || !geofence.HasCenter ? "tanımsız"
-                : (fenceBreach ? "SAHA DIŞI!" : string.Format(CultureInfo.InvariantCulture, "içinde (r={0:F0} m)", geofence.RadiusMeters));
-            DrawStatusRow(x, ref y, w, "Saha", fenceTxt,
-                geofence == null || !geofence.HasCenter ? TwinHudTheme.TextSecondary : (fenceBreach ? TwinHudTheme.Bad : TwinHudTheme.Good));
-
-            GUI.Label(new Rect(x, y, w - 28f, 16f),
-                "Uçuş modu: <b>" + (string.IsNullOrEmpty(mode) ? "-" : mode) + "</b>   ·   Fail-safe: " + ((rtl || lowLink || battCritical || fenceBreach) ? "tetiklendi" : "hazır"),
-                TwinHudTheme.Small);
-            y += 22f;
+            else
+            {
+                GUI.Label(new Rect(x, y, w - 28f, 18f), "Bağlantı kurulunca durum güncellenir.", TwinHudTheme.Small);
+                y += 24f;
+            }
 
             // --- Operator mudahale butonlari (basili tut) ---
             float bw = (w - 28f - 8f) * 0.5f;
-            DrawHoldButton(new Rect(x, y, bw, 26f), "EVE DÖN (RTL)", ref _rtlHold, () =>
+            DrawHoldButton(new Rect(x, y, bw, 26f), "EVE DÖN (RTL)", _rtlHold, () =>
             {
                 EnsureEgress();
                 if (commandEgress != null) commandEgress.SendReturnToLaunch();
             });
-            DrawHoldButton(new Rect(x + bw + 8f, y, bw, 26f), "ACİL DUR", ref _stopHold, () =>
+            DrawHoldButton(new Rect(x + bw + 8f, y, bw, 26f), "ACİL DUR", _stopHold, () =>
             {
                 EnsureEgress();
                 if (commandEgress != null) commandEgress.SendEmergencyStop();
             });
             y += 30f;
-            GUI.Label(new Rect(x, y, w - 28f, 14f), "komut için 1,2 sn basılı tut", new GUIStyle(TwinHudTheme.Small) { fontSize = 10 });
+            GUI.Label(new Rect(x, y, w - 28f, 14f), commandEgress != null && !string.IsNullOrEmpty(commandEgress.LastCommandInfo) ? commandEgress.LastCommandInfo : string.Format("Komut için {0:0.0} sn basılı tut", holdToConfirmSeconds), TwinHudTheme.Small);
 
             TwinHudTheme.EndScaledHud();
         }
@@ -153,27 +170,13 @@ namespace GroundStation.DigitalTwin
             y += 19f;
         }
 
-        private void DrawHoldButton(Rect rect, string label, ref float hold, System.Action onConfirm)
+        private void DrawHoldButton(Rect rect, string label, GroundStation.UI.HoldToConfirm hold, System.Action onConfirm)
         {
             bool pressed = GUI.RepeatButton(rect, label, TwinHudTheme.Button);
-            if (Event.current.type == EventType.Repaint)
-            {
-                if (pressed)
-                {
-                    hold += Time.unscaledDeltaTime;
-                    if (hold >= holdToConfirmSeconds)
-                    {
-                        hold = 0f;
-                        onConfirm?.Invoke();
-                    }
-                }
-                else
-                {
-                    hold = 0f;
-                }
-            }
-            if (hold > 0.01f)
-                TwinHudTheme.Fill(new Rect(rect.x + 2f, rect.yMax - 4f, (rect.width - 4f) * Mathf.Clamp01(hold / holdToConfirmSeconds), 3f), TwinHudTheme.Bad, 1.5f);
+            if (Event.current.type == EventType.Repaint && hold.Tick(pressed, Time.unscaledTime, holdToConfirmSeconds))
+                onConfirm?.Invoke();
+            if (hold.Progress > 0f)
+                TwinHudTheme.Fill(new Rect(rect.x + 2f, rect.yMax - 4f, (rect.width - 4f) * hold.Progress, 3f), TwinHudTheme.Bad, 1.5f);
         }
 
         private void EnsureEgress()

@@ -47,11 +47,11 @@ namespace GroundStation.DigitalTwin
 
         private void OnGUI()
         {
-            if (!showHud) return;
+            if (!showHud || !DigitalTwinHudWorkspace.Shows(DigitalTwinHudWorkspace.Detail.Camera)) return;
             TwinHudTheme.BeginScaledHud();
 
-            float w = TwinHudTheme.RightPanelWidth, h = 238f;
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Right, w, h, "twinhud_cam_v4");
+            float w = TwinHudTheme.LeftPanelWidth, h = 238f;
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_cam_v4");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 14f, y = r.y + 12f;

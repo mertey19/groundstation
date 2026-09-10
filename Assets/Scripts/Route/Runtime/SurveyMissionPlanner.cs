@@ -85,6 +85,7 @@ namespace GroundStation.Routes
         [SerializeField] private float metersPerWorldUnit = 1f;
 
         public SurveyPlanStats LastPlanStats { get; private set; }
+        public string LastPlanError { get; private set; } = "";
 
         private void Awake()
         {
@@ -233,9 +234,15 @@ namespace GroundStation.Routes
             float laneSpacing = Mathf.Max(2f, footprintS * (1f - sideOverlapPercent / 100f));
 
             float theta = Mathf.Deg2Rad * transectAngleDeg;
-            var points = BuildLawnmowerPointsRotated(bx0, bx1, bz0, bz1, forwardStep, laneSpacing, theta, turnaroundDistanceM);
+            List<Vector3> points;
+            var transit = new HashSet<Vector3>();
+            LastPlanError = "";
             if (useCustomPolygonArea && _customPolygon.Count >= 3)
-                points = FilterPointsInsidePolygon(points, _customPolygon);
+            {
+                if (!PolygonSurveyPath.TryBuild(_customPolygon, theta, forwardStep, laneSpacing, out points, out transit, out var error))
+                { LastPlanError = error; Debug.LogWarning("[SurveyMissionPlanner] " + error); return; }
+            }
+            else points = BuildLawnmowerPointsRotated(bx0, bx1, bz0, bz1, forwardStep, laneSpacing, theta, turnaroundDistanceM);
             if (startFromNearCornerToOrigin && points.Count > 1)
                 ReorderStartNearOrigin(points);
 
@@ -248,7 +255,7 @@ namespace GroundStation.Routes
                 var md = new WaypointMetadata
                 {
                     speedOverride = speedOverride,
-                    actionId = "photo",
+                    actionId = transit.Contains(points[i]) ? "" : "photo",
                     label = "survey"
                 };
                 Vector3 p = points[i];
@@ -283,7 +290,7 @@ namespace GroundStation.Routes
                 groundResolutionCmPerPixel = gsdCm,
                 effectiveAltitudeMeters = altitude,
                 transectAngleDeg = transectAngleDeg,
-                turnaroundDistanceM = turnaroundDistanceM
+                turnaroundDistanceM = useCustomPolygonArea ? 0f : turnaroundDistanceM
             };
 
             Debug.Log($"[SurveyMissionPlanner] Survey rota oluşturuldu. WP: {waypoints.Count}, alan≈{areaM:F0} m², tetik≈{forwardStep:F1} m, GSD≈{gsdCm:F2} cm/px, alt≈{altitude:F1} m");

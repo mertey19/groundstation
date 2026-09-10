@@ -5,13 +5,8 @@ using UnityEngine.UI;
 namespace GroundStation.UI
 {
     /// <summary>
-    /// Sol alt kose duzenleyici:
-    ///   1) "Yukseklik (m)" giris panelini gizler (yerini karekod foto galerisi alir),
-    ///   2) Buyuk "Haritadan | KAPALI" uGUI seridini ekran disina tasir ve yerine
-    ///      diger panellerle AYNI temada tek bir "WP Ekle" dugmesi cizer (TwinHudTheme).
-    ///      Dugme, gizli seritteki Toggle'i surer — islev birebir ayni:
-    ///      ACIKken haritaya tiklayarak waypoint eklenir.
-    /// Runtime'da calisir; sahne dosyasina dokunmaz. AutoBootstrap ekler.
+    /// Compact waypoint control. The altitude input is visible only while placing
+    /// waypoints; the original toggle binding stays alive behind a CanvasGroup.
     /// </summary>
     public class BottomLeftUiCompactor : MonoBehaviour
     {
@@ -26,7 +21,7 @@ namespace GroundStation.UI
         [Tooltip("Sag HUD kolonu (Ucus Guvenligi...) hiz panelinin altindan baslasin (sanal birim).")]
         [SerializeField] private float rightColumnStartBelowSpeedPanel = 300f;
         [Tooltip("WP dugmesinin sol kenardan uzakligi (sanal 1080p birimi).")]
-        [SerializeField] private float buttonX = 340f;
+        [SerializeField] private float buttonX = 16f;
         [SerializeField] private float buttonBottomMargin = 14f;
         [SerializeField] private Vector2 buttonSize = new Vector2(118f, 28f);
 
@@ -34,9 +29,12 @@ namespace GroundStation.UI
         private float _nextTryAt;
         private Toggle _wpToggle;
         private GUIStyle _hintStyle;
+        private GameObject _altitudePanel;
 
         private void Update()
         {
+            if (_altitudePanel != null && _wpToggle != null)
+                _altitudePanel.SetActive(_wpToggle.isOn);
             if ((_altDone || !hideAltitudePanel) && (_stripDone || !compactWaypointStrip) &&
                 (_speedDone || !moveSpeedPanelTopRight) && (_zoomDone || !hideZoomButtons))
                 return;   // arama bitti; OnGUI dugmesi icin bilesen acik kalir
@@ -75,7 +73,8 @@ namespace GroundStation.UI
             rt.anchoredPosition = speedPanelTopRightOffset;
 
             // Sag HUD kolonu (Ucus Guvenligi, Kamera, Hedefler) panelin altindan baslasin.
-            GroundStation.DigitalTwin.TwinHudTheme.RightColumnStartY = rightColumnStartBelowSpeedPanel;
+            if (DigitalTwinHudWorkspace.Instance == null)
+                TwinHudTheme.RightColumnStartY = rightColumnStartBelowSpeedPanel;
             _speedDone = true;
         }
 
@@ -84,22 +83,22 @@ namespace GroundStation.UI
             var zp = FindObjectOfType<MapZoomPanel>();
             if (zp == null) return;
 
-            // Butonlar MapZoomPanel'de serilestirilmis; reflection ile bulup gizle.
-            var t = zp.GetType();
-            var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-            foreach (var fieldName in new[] { "zoomInButton", "zoomOutButton" })
-            {
-                var f = t.GetField(fieldName, flags);
-                var b = f != null ? f.GetValue(zp) as Button : null;
-                if (b != null) b.gameObject.SetActive(false);
-            }
+            // Hide the background too; otherwise it covers the speed controls.
+            zp.gameObject.SetActive(false);
             _zoomDone = true;
         }
 
         private void TryHideAltitudePanel()
         {
-            var appearance = FindObjectOfType<AltitudePanelAppearance>();
+            var appearance = FindObjectOfType<AltitudePanelAppearance>(true);
             if (appearance == null) return;
+            _altitudePanel = appearance.gameObject;
+            var rect = appearance.transform as RectTransform;
+            if (rect != null)
+            {
+                rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0f, 0f);
+                rect.anchoredPosition = new Vector2(20f, 130f);
+            }
             appearance.gameObject.SetActive(false);
             _altDone = true;
         }
@@ -112,9 +111,8 @@ namespace GroundStation.UI
             _wpToggle = strip.GetComponentInChildren<Toggle>(true);
             if (_wpToggle == null) return;
 
-            // Seridi DEAKTIVE ETME (uzerindeki panel scripti calismali) — ekran disina tasi.
-            var rt = strip.GetComponent<RectTransform>();
-            if (rt != null) rt.anchoredPosition = new Vector2(-6000f, -6000f);
+            // Keep the binding alive without leaving invisible raycast targets.
+            HideGraphics(strip);
 
             // Eski ipucu metnini de ekran disina al (IMGUI ipucumuz onun yerine gecer).
             var hint = GameObject.Find("MapPlacementHint");
@@ -125,21 +123,31 @@ namespace GroundStation.UI
             }
             if (hint != null)
             {
-                var hrt = hint.GetComponent<RectTransform>();
-                if (hrt != null) hrt.anchoredPosition = new Vector2(-6000f, -6000f);
+                HideGraphics(hint);
             }
 
             _stripDone = true;
         }
 
+        private static void HideGraphics(GameObject root)
+        {
+            var group = root.GetComponent<CanvasGroup>();
+            if (group == null) group = root.AddComponent<CanvasGroup>();
+            group.alpha = 0f;
+            group.interactable = false;
+            group.blocksRaycasts = false;
+        }
+
         private void OnGUI()
         {
+            if (DigitalTwinUIController.SiteWorkspaceOpen) return;
             if (_wpToggle == null) return;
             TwinHudTheme.BeginScaledHud();
 
             bool on = _wpToggle.isOn;
             var r = new Rect(buttonX, TwinHudTheme.ScreenH - buttonSize.y - buttonBottomMargin,
                              buttonSize.x, buttonSize.y);
+            HudInputBlocker.Register(r);
 
             // Acikken buton altinda accent serit — durum bir bakista belli olur.
             if (on)
@@ -152,7 +160,7 @@ namespace GroundStation.UI
             {
                 if (_hintStyle == null)
                     _hintStyle = new GUIStyle(TwinHudTheme.Small) { alignment = TextAnchor.MiddleLeft };
-                GUI.Label(new Rect(r.xMax + 10f, r.y, 260f, r.height), "haritaya tıklayarak waypoint ekle", _hintStyle);
+                GUI.Label(new Rect(r.x, r.y - 22f, 300f, 18f), "Haritaya tıklayarak waypoint ekle", _hintStyle);
             }
 
             TwinHudTheme.EndScaledHud();

@@ -32,7 +32,10 @@ namespace GroundStation.DigitalTwin
         /// <summary>Genel HUD kompaktligi: 1 = tam boy, 0.78 = %22 kucuk paneller (yazilar dahil).</summary>
         public static float HudCompactScale = 0.78f;
 
-        public static float UiScale => Mathf.Max(1f, Screen.height / 1080f) * Mathf.Clamp(HudCompactScale, 0.6f, 1.2f);
+        public static float UiScale => DigitalTwinUIController.SiteWorkspaceOpen
+            ? Mathf.Clamp(Mathf.Min(Screen.width / 1280f, Screen.height / 720f), 0.75f, 1.5f)
+            : Mathf.Max(0.35f, Mathf.Min(Screen.width / 1280f,
+                Screen.height / 720f, Mathf.Max(1f, Screen.height / 1080f))) * Mathf.Clamp(HudCompactScale, 0.6f, 1.2f);
         public static float ScreenW => Screen.width / UiScale;
         public static float ScreenH => Screen.height / UiScale;
 
@@ -76,6 +79,7 @@ namespace GroundStation.DigitalTwin
         /// <summary>Yuvarlatilmis cam panel (golge + arka plan + ince kenar).</summary>
         public static void Panel(Rect r)
         {
+            GroundStation.UI.HudInputBlocker.Register(r);
             var prev = GUI.color;
             GUI.color = Color.white;
             GUI.DrawTexture(new Rect(r.x + 2f, r.y + 4f, r.width, r.height), Texture2D.whiteTexture, ScaleMode.StretchToFill, true, 0f, new Color(0f, 0f, 0f, 0.32f), 0f, 14f);
@@ -94,7 +98,7 @@ namespace GroundStation.DigitalTwin
         public static float RightColumnStartY = 130f;   // sag ust kontrol butonlarinin alti
 
         // Kolon panel genislikleri — tum paneller ayni kolonda AYNI genislikte hizalanir.
-        public const float LeftPanelWidth = 296f;
+        public const float LeftPanelWidth = 344f;
         public const float RightPanelWidth = 300f;
         private const float StackGap = 8f;
 
@@ -105,7 +109,7 @@ namespace GroundStation.DigitalTwin
         private static void EnsureStackFrame()
         {
             var e = Event.current;
-            var t = e != null ? e.type : EventType.Ignore;
+            var t = e != null ? e.rawType : EventType.Ignore;
             if (Time.frameCount != _stackFrame || t != _stackEvt)
             {
                 _stackFrame = Time.frameCount;
@@ -132,6 +136,13 @@ namespace GroundStation.DigitalTwin
         /// <summary>Kolon istifine katilan suruklenebilir panel (onerilen).</summary>
         public static Rect Drag(ref Vector2 pos, ref bool dragging, HudColumn column, float w, float h, string prefsKey = null)
         {
+            if (DigitalTwinHudWorkspace.Instance != null)
+            {
+                if (column == HudColumn.Left)
+                    return DigitalTwinHudWorkspace.Instance.DetailRect(w, h);
+                if (column == HudColumn.Right)
+                    return new Rect(ScreenW - w - 16f, RightColumnStartY, w, h);
+            }
             if (pos.x < -9000f && !string.IsNullOrEmpty(prefsKey) && PlayerPrefs.HasKey(prefsKey + "_x"))
                 pos = new Vector2(PlayerPrefs.GetFloat(prefsKey + "_x"), PlayerPrefs.GetFloat(prefsKey + "_y"));
 
@@ -218,13 +229,32 @@ namespace GroundStation.DigitalTwin
 
         public static void Line(Vector2 a, Vector2 b, Color color, float width)
         {
-            var saved = GUI.matrix;
-            Vector2 d = b - a;
-            float angle = Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg;
-            float len = d.magnitude;
-            GUIUtility.RotateAroundPivot(angle, a);
-            Fill(new Rect(a.x, a.y - width * 0.5f, len, width), color, width * 0.5f);
-            GUI.matrix = saved;
+            Vector2 delta = b - a;
+            if (delta.sqrMagnitude < 0.0001f || width <= 0f) return;
+            Color previous = GUI.color;
+            GUI.color = color;
+            try
+            {
+                // Rasterize along the dominant axis. Axis-aligned strips respect both
+                // GUI groups and HUD scaling; rotating GUI.matrix moves Unity's clip space.
+                bool horizontal = Mathf.Abs(delta.x) >= Mathf.Abs(delta.y);
+                float span = horizontal ? Mathf.Abs(delta.x) : Mathf.Abs(delta.y);
+                float scale = GUI.matrix.MultiplyVector(horizontal ? Vector3.right : Vector3.up).magnitude;
+                int steps = Mathf.Clamp(Mathf.CeilToInt(span * scale), 1, 2048);
+                float step = span / steps;
+                float thickness = width * delta.magnitude / span;
+                Vector2 start = horizontal ? (a.x <= b.x ? a : b) : (a.y <= b.y ? a : b);
+                Vector2 end = start == a ? b : a;
+                for (int i = 0; i < steps; i++)
+                {
+                    Vector2 center = Vector2.Lerp(start, end, (i + 0.5f) / steps);
+                    Rect strip = horizontal
+                        ? new Rect(start.x + i * step, center.y - thickness * 0.5f, step, thickness)
+                        : new Rect(center.x - thickness * 0.5f, start.y + i * step, thickness, step);
+                    GUI.DrawTexture(strip, Texture2D.whiteTexture);
+                }
+            }
+            finally { GUI.color = previous; }
         }
 
         public static Color Quality(float pct)

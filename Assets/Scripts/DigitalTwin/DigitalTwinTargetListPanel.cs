@@ -38,13 +38,14 @@ namespace GroundStation.DigitalTwin
 
         private void OnGUI()
         {
+            if (!DigitalTwinHudWorkspace.Shows(DigitalTwinHudWorkspace.Detail.Targets)) return;
             if (missionEngine == null) return;
-            if (_targets.Count == 0 && !showWhenEmpty) return;
+            if (_targets.Count == 0 && !showWhenEmpty && !DigitalTwinHudWorkspace.IsSelected(DigitalTwinHudWorkspace.Detail.Targets)) return;
 
             TwinHudTheme.BeginScaledHud();
             int rows = Mathf.Min(maxRows, Mathf.Max(1, _targets.Count));
-            float w = TwinHudTheme.RightPanelWidth, h = 64f + rows * 22f;
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Right, w, h, "twinhud_targets_v4");
+            float w = TwinHudTheme.LeftPanelWidth, h = 64f + rows * 22f;
+            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_targets_v4");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 14f, y = r.y + 12f;
@@ -57,8 +58,10 @@ namespace GroundStation.DigitalTwin
             TwinHudTheme.Separator(x, y, w - 28f);
             y += 8f;
 
-            if (_rowStyle == null) _rowStyle = new GUIStyle(TwinHudTheme.Label) { fontSize = 12 };
-            if (_contentStyle == null) _contentStyle = new GUIStyle(TwinHudTheme.Small) { alignment = TextAnchor.MiddleRight };
+            if (_rowStyle == null) _rowStyle = new GUIStyle(TwinHudTheme.Label) { fontSize = 12, clipping = TextClipping.Clip, richText = false };
+            if (_contentStyle == null) _contentStyle = new GUIStyle(TwinHudTheme.Small) { alignment = TextAnchor.MiddleRight, clipping = TextClipping.Clip, richText = false };
+            if (_targets.Count == 0)
+                GUI.Label(new Rect(x, y, w - 28f, 20f), "Henüz hedef alınmadı.", TwinHudTheme.Small);
 
             int shown = 0;
             for (int i = 0; i < _targets.Count && shown < maxRows; i++, shown++)

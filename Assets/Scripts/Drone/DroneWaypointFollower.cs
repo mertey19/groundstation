@@ -144,9 +144,9 @@ namespace GroundStation.Drone
                         break;
 
                     Vector3 dir = (target - transform.position).normalized;
+                    speed = wp.metadata != null && wp.metadata.speedOverride > 0 ? wp.metadata.speedOverride : moveSpeed;
                     currentSpeed = speed;
-
-                    transform.position += dir * speed * Time.deltaTime;
+                    transform.position = Vector3.MoveTowards(transform.position, target, speed * Time.deltaTime);
 
                     if (dir.sqrMagnitude > 0.001f)
                     {

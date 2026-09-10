@@ -39,6 +39,7 @@ namespace GroundStation.Map
         /// </summary>
         public void SetSatellite()
         {
+            if (digitalTwinController != null && digitalTwinController.IsOpen) digitalTwinController.SetViewOpen(false);
             if (abstractMap == null) abstractMap = FindObjectOfType<AbstractMap>();
             if (abstractMap == null || abstractMap.ImageLayer == null) return;
             abstractMap.ImageLayer.SetLayerSource(ImagerySourceType.MapboxSatellite);
@@ -51,6 +52,7 @@ namespace GroundStation.Map
         /// </summary>
         public void SetStreet()
         {
+            if (digitalTwinController != null && digitalTwinController.IsOpen) digitalTwinController.SetViewOpen(false);
             if (abstractMap == null) abstractMap = FindObjectOfType<AbstractMap>();
             if (abstractMap == null || abstractMap.ImageLayer == null) return;
             abstractMap.ImageLayer.SetLayerSource(ImagerySourceType.MapboxStreets);
@@ -64,6 +66,7 @@ namespace GroundStation.Map
         /// </summary>
         public void SetMap3D()
         {
+            if (digitalTwinController != null && digitalTwinController.IsOpen) digitalTwinController.SetViewOpen(false);
             if (abstractMap == null) abstractMap = FindObjectOfType<AbstractMap>();
             if (abstractMap == null) return;
 

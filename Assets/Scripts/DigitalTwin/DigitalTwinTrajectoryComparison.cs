@@ -454,14 +454,14 @@ namespace GroundStation.DigitalTwin
 
         private void OnGUI()
         {
-            if (!showHud) return;
+            if (!showHud || !DigitalTwinHudWorkspace.Shows(DigitalTwinHudWorkspace.Detail.Trajectory)) return;
             // Veri gelmemis olsa bile, sahnede veri kumesi oynaticisi varsa panel gorunur:
             // bagimsiz surumde operatorun demoyu baslatabilecegi tek yer burasi.
             var demoPlayer = ResolveDatasetPlayer();
-            if (!_hasGps && !_hasSlam && demoPlayer == null) return;
+            if (!_hasGps && !_hasSlam && demoPlayer == null && !DigitalTwinHudWorkspace.IsSelected(DigitalTwinHudWorkspace.Detail.Trajectory)) return;
 
             float s = TwinHudTheme.BeginScaledHud();
-            float w = TwinHudTheme.LeftPanelWidth, h = 204f + (demoPlayer != null ? 26f : 0f);
+            float w = 344f, h = 224f + (demoPlayer != null ? 26f : 0f);
             // Sol kolon istifi: alt alta otomatik dizilir, cakismaz.
             Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_traj_v4");
             TwinHudTheme.Panel(r);
@@ -499,13 +499,13 @@ namespace GroundStation.DigitalTwin
             y += 25f;
 
             float avg = _devN > 0 ? _devSum / _devN : 0f;
-            Color dc = _devNow < 2f ? TwinHudTheme.Good : (_devNow < 5f ? TwinHudTheme.Warn : TwinHudTheme.Bad);
+            Color dc = _devN == 0 ? TwinHudTheme.TextSecondary : (_devNow < 2f ? TwinHudTheme.Good : (_devNow < 5f ? TwinHudTheme.Warn : TwinHudTheme.Bad));
             if (_valStyle == null) _valStyle = new GUIStyle(TwinHudTheme.Value);
             _valStyle.normal.textColor = dc;
-            GUI.Label(new Rect(x, y, w - 32f, 22f), string.Format(CultureInfo.InvariantCulture, "Sapma  {0:F2} m", _devNow), _valStyle);
+            GUI.Label(new Rect(x, y, w - 32f, 22f), _devN == 0 ? "Sapma  —" : string.Format(CultureInfo.InvariantCulture, "Sapma  {0:F2} m", _devNow), _valStyle);
             y += 23f;
             GUI.Label(new Rect(x, y, w - 32f, 16f),
-                string.Format(CultureInfo.InvariantCulture, "ort {0:F2} · maks {1:F2} · RMSE {2:F2} m", avg, _devMax, Rmse()),
+                _devN == 0 ? "Gerçek konum ve SLAM eşleşmesi bekleniyor." : string.Format(CultureInfo.InvariantCulture, "ort {0:F2} · maks {1:F2} · RMSE {2:F2} m", avg, _devMax, Rmse()),
                 TwinHudTheme.Small);
             y += 18f;
 

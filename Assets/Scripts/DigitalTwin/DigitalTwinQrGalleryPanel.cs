@@ -26,6 +26,7 @@ namespace GroundStation.DigitalTwin
         private Vector2 _hudPos = new Vector2(-99999f, 0f);
         private bool _drag;
         private int _selected = -1;
+        private Vector2 _scroll;
         private GUIStyle _thumbLabel, _centerStyle;
 
         /// <summary>Ag uzerinden gelen fotografi arsive ekler (kendi kopyasini cozer).</summary>
@@ -52,6 +53,7 @@ namespace GroundStation.DigitalTwin
             {
                 if (_photos[0].tex != null) Destroy(_photos[0].tex);
                 _photos.RemoveAt(0);
+                _selected = Mathf.Max(-1, _selected - 1);
             }
         }
 
@@ -64,18 +66,23 @@ namespace GroundStation.DigitalTwin
 
         private void OnGUI()
         {
-            if (_photos.Count == 0 && !showWhenEmpty) return;
+            if (!DigitalTwinHudWorkspace.Shows(DigitalTwinHudWorkspace.Detail.Photos)) return;
+            if (_photos.Count == 0 && !showWhenEmpty && !DigitalTwinHudWorkspace.IsSelected(DigitalTwinHudWorkspace.Detail.Photos)) return;
             TwinHudTheme.BeginScaledHud();
 
             const float thumbW = 84f, thumbH = 64f, pad = 6f;
             int cols = 3;
             int rows = Mathf.Max(1, Mathf.CeilToInt(_photos.Count / (float)cols));
-            float w = 16f * 2f + cols * thumbW + (cols - 1) * pad;
+            float w = TwinHudTheme.LeftPanelWidth;
             float h = 58f + rows * (thumbH + 18f + pad);
+            if (DigitalTwinHudWorkspace.Instance != null)
+                h = Mathf.Min(h, Mathf.Max(146f, TwinHudTheme.ScreenH - DigitalTwinHudWorkspace.Instance.DetailRect(w, 0f).y - 150f));
 
             // Sol ALT kose (eski Yukseklik panelinin yeri) — kolon istifinden bagimsiz.
             Vector2 def = new Vector2(16f, TwinHudTheme.ScreenH - h - 10f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_gallery_v5");
+            Rect r = DigitalTwinHudWorkspace.Instance != null
+                ? DigitalTwinHudWorkspace.Instance.DetailRect(w, h)
+                : TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_gallery_v5");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;
@@ -85,11 +92,14 @@ namespace GroundStation.DigitalTwin
             y += 8f;
 
             if (_thumbLabel == null) _thumbLabel = new GUIStyle(TwinHudTheme.Small) { alignment = TextAnchor.MiddleCenter, fontSize = 10 };
-
+            _scroll = GUI.BeginScrollView(new Rect(x, y, w - 32f, h - 58f), _scroll,
+                new Rect(0f, 0f, w - 50f, rows * (thumbH + 18f + pad)));
+            if (_photos.Count == 0)
+                GUI.Label(new Rect(0f, 12f, w - 50f, 36f), "Alınan hedef fotoğrafları burada görünecek.", TwinHudTheme.Small);
             for (int i = 0; i < _photos.Count; i++)
             {
                 int cx = i % cols, cy = i / cols;
-                var cell = new Rect(x + cx * (thumbW + pad), y + cy * (thumbH + 18f + pad), thumbW, thumbH);
+                var cell = new Rect(cx * (thumbW + pad), cy * (thumbH + 18f + pad), thumbW, thumbH);
                 TwinHudTheme.Fill(cell, new Color(0f, 0f, 0f, 0.5f), 4f);
                 if (_photos[i].tex != null)
                     GUI.DrawTexture(cell, _photos[i].tex, ScaleMode.ScaleAndCrop, false);
@@ -97,10 +107,12 @@ namespace GroundStation.DigitalTwin
                     _selected = (_selected == i) ? -1 : i;
                 GUI.Label(new Rect(cell.x, cell.yMax + 1f, thumbW, 14f), _photos[i].id, _thumbLabel);
             }
+            GUI.EndScrollView();
 
             // Buyuk onizleme (tiklanan fotograf).
             if (_selected >= 0 && _selected < _photos.Count && _photos[_selected].tex != null)
             {
+                Photo selectedPhoto = _photos[_selected];
                 float bw = Mathf.Min(420f, TwinHudTheme.ScreenW * 0.5f);
                 float bh = bw * 0.75f + 36f;
                 var big = new Rect((TwinHudTheme.ScreenW - bw) * 0.5f, (TwinHudTheme.ScreenH - bh) * 0.5f, bw, bh);
@@ -110,7 +122,7 @@ namespace GroundStation.DigitalTwin
                     _selected = -1;
                 var imgRect = new Rect(big.x + 12f, big.y + 32f, bw - 24f, bh - 44f);
                 TwinHudTheme.Fill(imgRect, new Color(0f, 0f, 0f, 0.6f), 4f);
-                GUI.DrawTexture(imgRect, _photos[_selected].tex, ScaleMode.ScaleToFit, false);
+                GUI.DrawTexture(imgRect, selectedPhoto.tex, ScaleMode.ScaleToFit, false);
             }
 
             TwinHudTheme.EndScaledHud();

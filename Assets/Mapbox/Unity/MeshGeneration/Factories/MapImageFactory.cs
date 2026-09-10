@@ -50,7 +50,8 @@ namespace Mapbox.Unity.MeshGeneration.Factories
 		#region UnityMethods
 		protected virtual void OnDestroy()
 		{
-			//unregister events
+			Clear();
+            //unregister events
 			if (DataFetcher != null)
 			{
 				DataFetcher.DataRecieved -= OnImageRecieved;
@@ -92,9 +93,13 @@ namespace Mapbox.Unity.MeshGeneration.Factories
 		#region AbstractFactoryOverrides
 		protected override void OnInitialized()
 		{
-			DataFetcher = ScriptableObject.CreateInstance<ImageDataFetcher>();
-			DataFetcher.DataRecieved += OnImageRecieved;
-			DataFetcher.FetchingError += OnDataError;
+			if (DataFetcher == null)
+            {
+                DataFetcher = ScriptableObject.CreateInstance<ImageDataFetcher>();
+                DataFetcher.DataRecieved += OnImageRecieved;
+                DataFetcher.FetchingError += OnDataError;
+            }
+            DataFetcher.Initialize(_fileSource);
 		}
 
 		public override void SetOptions(LayerProperties options)
@@ -116,7 +121,9 @@ namespace Mapbox.Unity.MeshGeneration.Factories
 		{
 			if (_properties.sourceType == ImagerySourceType.None)
 			{
-				tile.SetRasterData(null);
+				if (DataFetcher != null) DataFetcher.Cancel(tile);
+                tile.RasterDataState = TilePropertyState.None;
+                tile.SetRasterData(null);
 				tile.RasterDataState = TilePropertyState.None;
 				return;
 			}
@@ -152,7 +159,8 @@ namespace Mapbox.Unity.MeshGeneration.Factories
 		}
 
 		protected override void OnUnregistered(UnityTile tile)
-		{
+        {
+            if (DataFetcher != null) DataFetcher.Cancel(tile);
 			if (_tilesWaitingResponse != null && _tilesWaitingResponse.Contains(tile))
 			{
 				_tilesWaitingResponse.Remove(tile);

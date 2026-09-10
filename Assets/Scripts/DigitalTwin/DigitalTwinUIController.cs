@@ -40,9 +40,12 @@ namespace GroundStation.DigitalTwin
         private bool _surveySelectorWasEnabled = true;
 
         public bool IsOpen => _isOpen;
+        public static bool SiteWorkspaceOpen { get; private set; }
+        private DigitalTwinSiteWorkspace _siteWorkspace;
 
         private void Awake()
         {
+            SiteWorkspaceOpen = false;
             if (map3DMode == null)
                 map3DMode = FindObjectOfType<DigitalTwinMap3DMode>();
             if (map3DMode == null)
@@ -111,7 +114,9 @@ namespace GroundStation.DigitalTwin
 
         public void SetViewOpen(bool open)
         {
+            if (_isOpen == open) return;
             _isOpen = open;
+            SiteWorkspaceOpen = open && twinMode == TwinViewMode.Mode3D;
 
             if (digitalTwinPanel == null)
             {
@@ -139,6 +144,8 @@ namespace GroundStation.DigitalTwin
             }
 
             digitalTwinPanel.SetActive(_isOpen);
+            // Prepare the renderer before handing its camera to the survey scene.
+            ApplyTwinViewMode(_isOpen);
 
             // Close button listener'i sadece OnEnable'da ekliyoruz.
             // SetViewOpen her cagrildiginda yeniden eklemek duplicate listener'a yol acar.
@@ -173,7 +180,9 @@ namespace GroundStation.DigitalTwin
                 }
             }
 
-            ApplyTwinViewMode(_isOpen);
+            if (_siteWorkspace == null) _siteWorkspace = digitalTwinPanel.GetComponent<DigitalTwinSiteWorkspace>();
+            if (_siteWorkspace == null) _siteWorkspace = digitalTwinPanel.AddComponent<DigitalTwinSiteWorkspace>();
+            _siteWorkspace.SetOpen(SiteWorkspaceOpen, this);
             ApplyHudVisibilityForTwin(_isOpen);
 
             // Mapbox haritasinin her zaman render edilmesi gerekiyor (RenderTexture icin).
@@ -294,14 +303,14 @@ namespace GroundStation.DigitalTwin
             for (int i = 0; i < routeViews.Length; i++)
             {
                 if (routeViews[i] != null)
-                    routeViews[i].gameObject.SetActive(true);
+                    routeViews[i].enabled = open && twinMode == TwinViewMode.Mode2DOverlay;
             }
 
             var droneViews = digitalTwinPanel.GetComponentsInChildren<DigitalTwinDroneView>(true);
             for (int i = 0; i < droneViews.Length; i++)
             {
                 if (droneViews[i] != null)
-                    droneViews[i].gameObject.SetActive(true);
+                    droneViews[i].gameObject.SetActive(open && twinMode == TwinViewMode.Mode2DOverlay);
             }
         }
 
@@ -352,7 +361,6 @@ namespace GroundStation.DigitalTwin
             if (closeButton != null) return;
             if (digitalTwinPanel == null) return;
 
-            Button fallback = null;
             foreach (var b in digitalTwinPanel.GetComponentsInChildren<Button>(true))
             {
                 string n = b.gameObject.name.ToLowerInvariant();
@@ -363,11 +371,7 @@ namespace GroundStation.DigitalTwin
                     closeButton = b;
                     break;
                 }
-                if (fallback == null && b != digitalTwinButton)
-                    fallback = b;
             }
-            if (closeButton == null)
-                closeButton = fallback;
         }
 
         private void RestoreMainRouteVisuals()

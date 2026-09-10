@@ -130,6 +130,7 @@ namespace GroundStation.Routes
             UpdateDebugStatusText();
             UpdatePreviewWidthByCamera();
             if (!_isSelecting) return;
+            if (GroundStation.DigitalTwin.DigitalTwinUIController.SiteWorkspaceOpen || GroundStation.Map.MapImageContinuity.IsUpdating) return;
             EnsureRuntimeRefs();
             if (mapCamera == null || abstractMap == null || abstractMap.Root == null)
             {
@@ -145,7 +146,7 @@ namespace GroundStation.Routes
             }
 
             // Polygon mode: sag tik ile bitir.
-            if (_mode == SelectionMode.Polygon && Input.GetMouseButtonDown(1))
+            if (_mode == SelectionMode.Polygon && Input.GetMouseButtonDown(1) && !IsPointerOverUI())
             {
                 FinishPolygonSelection();
                 return;
@@ -288,6 +289,7 @@ namespace GroundStation.Routes
 
         private bool IsPointerOverUI()
         {
+            if (GroundStation.UI.HudInputBlocker.IsPointerOverUI()) return true;
             if (EventSystem.current == null) return false;
 
             // En deterministik yontem: ayni frame'de UI icin raycast yap.

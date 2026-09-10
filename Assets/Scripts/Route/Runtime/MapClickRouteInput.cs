@@ -25,8 +25,12 @@ namespace GroundStation.Inputs
 
         private void Update()
         {
+            if (GroundStation.DigitalTwin.DigitalTwinUIController.SiteWorkspaceOpen || GroundStation.Map.MapImageContinuity.IsUpdating) return;
             // Sol mouse tuþu
             if (!Input.GetMouseButtonDown(0))
+                return;
+
+            if (!WaypointMapEditState.IsMapClickPlacementEnabled || GroundStation.UI.HudInputBlocker.IsPointerOverUI())
                 return;
 
             if (mapCamera == null || routeManager == null)

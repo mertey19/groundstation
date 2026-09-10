@@ -68,6 +68,7 @@ namespace GroundStation.Inputs
 
         private void Update()
         {
+            if (GroundStation.DigitalTwin.DigitalTwinUIController.SiteWorkspaceOpen || GroundStation.Map.MapImageContinuity.IsUpdating) return;
             if (!Input.GetMouseButtonDown(0)) return;
 
             if (requirePlacementModeFromMenu && !WaypointMapEditState.IsMapClickPlacementEnabled)
@@ -76,7 +77,7 @@ namespace GroundStation.Inputs
                 return;
             }
 
-            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+            if (HudInputBlocker.IsPointerOverUI())
                 return;
 
             if (Time.unscaledTime - _lastSpawnTime < clickCooldownSeconds)

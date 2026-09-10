@@ -27,6 +27,9 @@ namespace Mapbox.Unity.MeshGeneration.Factories.TerrainStrategies
 
 		}
 
+        // Make geometry available while an elevation request is still pending.
+        public virtual void PrepareTile(UnityTile tile) { }
+
 		public virtual void PostProcessTile(UnityTile tile)
 		{
 

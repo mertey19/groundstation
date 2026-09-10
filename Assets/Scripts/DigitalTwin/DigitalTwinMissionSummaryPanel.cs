@@ -28,6 +28,18 @@ namespace GroundStation.DigitalTwin
         private float _nextResolveAt;
         private string _savedPath = "";
         private float _savedPathUntil;
+        private DigitalTwinMissionEngine _subscribedEngine;
+
+        private void OnEnable() { ResolveEngine(); }
+
+        private void ResolveEngine()
+        {
+            if (missionEngine == null) missionEngine = FindObjectOfType<DigitalTwinMissionEngine>();
+            if (_subscribedEngine == missionEngine) return;
+            if (_subscribedEngine != null) _subscribedEngine.OnMissionEvent -= HandleEvent;
+            _subscribedEngine = missionEngine;
+            if (_subscribedEngine != null) _subscribedEngine.OnMissionEvent += HandleEvent;
+        }
 
         private void Update()
         {
@@ -35,22 +47,14 @@ namespace GroundStation.DigitalTwin
             {
                 _nextResolveAt = Time.unscaledTime + 2f;
                 if (trajectory == null) trajectory = FindObjectOfType<DigitalTwinTrajectoryComparison>();
-                if (missionEngine == null)
-                {
-                    missionEngine = FindObjectOfType<DigitalTwinMissionEngine>();
-                    if (missionEngine != null)
-                    {
-                        missionEngine.OnMissionEvent -= HandleEvent;
-                        missionEngine.OnMissionEvent += HandleEvent;
-                    }
-                }
+                ResolveEngine();
             }
         }
 
         private void OnDisable()
         {
-            if (missionEngine != null)
-                missionEngine.OnMissionEvent -= HandleEvent;
+            if (_subscribedEngine != null) _subscribedEngine.OnMissionEvent -= HandleEvent;
+            _subscribedEngine = null;
         }
 
         private void HandleEvent(DigitalTwinMissionEngine.MissionEvent evt)
@@ -60,7 +64,7 @@ namespace GroundStation.DigitalTwin
                 case "phase_change":
                     if (_missionStartAt < 0f) _missionStartAt = evt.timeSeconds;
                     _phaseStarts.Add(new KeyValuePair<string, float>(evt.details ?? "", evt.timeSeconds));
-                    if (evt.details != null && evt.details.Contains(TwinOperationPhases.Complete))
+                    if (missionEngine != null && missionEngine.CurrentPhase == TwinOperationPhases.Complete)
                     {
                         _missionEndAt = evt.timeSeconds;
                         if (autoOpenOnComplete) _visible = true;
@@ -81,18 +85,18 @@ namespace GroundStation.DigitalTwin
             if (!_visible || missionEngine == null) return;
             TwinHudTheme.BeginScaledHud();
 
-            float w = 356f, h = 268f;
+            float w = 440f, h = 300f;
             Vector2 def = new Vector2((TwinHudTheme.ScreenW - w) * 0.5f, (TwinHudTheme.ScreenH - h) * 0.5f - 40f);
             Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_summary_v2");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;
-            GUI.Label(new Rect(x, y, w - 32f, 18f), "GÖREV ÖZETİ  ·  Tamamlandı", TwinHudTheme.Title);
+            GUI.Label(new Rect(x, y, w - 32f, 18f), _missionEndAt >= 0f ? "GÖREV ÖZETİ · Tamamlandı" : "GÖREV ÖZETİ", TwinHudTheme.Title);
             y += 23f;
             TwinHudTheme.Separator(x, y, w - 32f);
             y += 9f;
 
-            float dur = (_missionEndAt > 0f && _missionStartAt >= 0f) ? _missionEndAt - _missionStartAt : 0f;
+            float dur = MissionDuration;
             Row(x, ref y, w, "Görev süresi", FormatDuration(dur));
             Row(x, ref y, w, "Hedefler", missionEngine.TargetsReachedCount + " / " + missionEngine.TargetsTotalCount + " tamamlandı",
                 missionEngine.TargetsTotalCount > 0 && missionEngine.TargetsReachedCount >= missionEngine.TargetsTotalCount ? TwinHudTheme.Good : TwinHudTheme.Warn);
@@ -145,7 +149,7 @@ namespace GroundStation.DigitalTwin
                 var sb = new System.Text.StringBuilder();
                 sb.AppendLine("SIMURGH X.1 — GOREV OZETI  (" + DateTime.Now.ToString("yyyy-MM-dd HH:mm") + ")");
                 sb.AppendLine(new string('-', 52));
-                float dur = (_missionEndAt > 0f && _missionStartAt >= 0f) ? _missionEndAt - _missionStartAt : 0f;
+                float dur = MissionDuration;
                 sb.AppendLine("Gorev suresi        : " + FormatDuration(dur));
                 sb.AppendLine("Hedefler            : " + missionEngine.TargetsReachedCount + "/" + missionEngine.TargetsTotalCount);
                 sb.AppendLine("Dinamik replan      : " + _replanCount);
@@ -179,5 +183,8 @@ namespace GroundStation.DigitalTwin
             int s = Mathf.FloorToInt(seconds % 60f);
             return string.Format("{0:D2}:{1:D2}", m, s);
         }
+
+        private float MissionDuration => _missionStartAt < 0f ? 0f
+            : Mathf.Max(0f, (_missionEndAt >= 0f ? _missionEndAt : Time.unscaledTime) - _missionStartAt);
     }
 }

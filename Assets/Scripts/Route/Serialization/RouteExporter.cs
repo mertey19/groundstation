@@ -17,6 +17,8 @@ namespace GroundStation.Routes
         [SerializeField] private bool prettyPrint = true;
         [SerializeField] private string defaultFileName = "route_export.json";
 
+        public void SetRouteManager(RouteManager manager) => routeManager = manager;
+
         private void Awake()
         {
             if (routeManager == null)
@@ -61,6 +63,7 @@ namespace GroundStation.Routes
 
             try
             {
+                Directory.CreateDirectory(dir);
                 File.WriteAllText(path, json);
                 Debug.Log($"[RouteExporter] Exported to {path}");
                 return path;
@@ -88,6 +91,7 @@ namespace GroundStation.Routes
 
         private RouteData GetRouteData()
         {
+            if (routeManager == null) routeManager = FindObjectOfType<RouteManager>();
             return routeManager != null ? routeManager.GetRouteData() : null;
         }
     }

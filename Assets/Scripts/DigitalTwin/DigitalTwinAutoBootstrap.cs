@@ -46,6 +46,7 @@ namespace GroundStation.DigitalTwin
         /// </summary>
         private void EnsureHudPanels()
         {
+            EnsureSingleton<DigitalTwinHudWorkspace>("DigitalTwinHudWorkspace");
             EnsureSingleton<DigitalTwinTrajectoryComparison>("DigitalTwinTrajectoryComparison");
             EnsureSingleton<DigitalTwinMeshTopologyPanel>("DigitalTwinMeshTopologyPanel");
             EnsureSingleton<DigitalTwinCameraFeedPanel>("DigitalTwinCameraFeedPanel");
@@ -56,12 +57,13 @@ namespace GroundStation.DigitalTwin
             EnsureSingleton<DigitalTwinCommandEgress>("DigitalTwinCommandEgress");
             EnsureSingleton<DigitalTwinQrGalleryPanel>("DigitalTwinQrGalleryPanel");
             EnsureSingleton<DigitalTwinRoverRouteView>("DigitalTwinRoverRouteView");
+            EnsureSingleton<LiveMapReceiver>("LiveMapReceiver");
             EnsureSingleton<GroundStation.UI.BottomLeftUiCompactor>("BottomLeftUiCompactor");
         }
 
         private static void EnsureSingleton<T>(string objectName) where T : Component
         {
-            if (FindObjectOfType<T>() != null) return;
+            if (FindObjectOfType<T>(true) != null) return;
             var go = new GameObject(objectName);
             go.AddComponent<T>();
         }

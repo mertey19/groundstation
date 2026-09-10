@@ -1,3 +1,4 @@
+using GroundStation.DigitalTwin;
 using UnityEngine;
 using UnityEngine.UI;
 using GroundStation.Drone;
@@ -37,6 +38,8 @@ namespace GroundStation.UI
         [SerializeField] private Color buttonTextColor = new Color(0.12f, 0.12f, 0.12f, 1f);
         [SerializeField] private Color buttonColor = new Color(0.94f, 0.94f, 0.94f, 1f);
 
+        private DigitalTwinRemoteState _remote;
+        private DigitalTwinCommandEgress _commands;
         private float _nextLabelUpdate;
         private Font _uiFont;
 
@@ -63,34 +66,71 @@ namespace GroundStation.UI
             }
         }
 
+        private void Start()
+        {
+            SetCaption(speedUpButton, "Hız +");
+            SetCaption(speedDownButton, "Hız −");
+            SetCaption(altitudeUpButton, "İrtifa +");
+            SetCaption(altitudeDownButton, "İrtifa −");
+            ArrangeButtons();
+        }
+
+        private static void SetCaption(Button button, string caption)
+        {
+            var text = button != null ? button.GetComponentInChildren<Text>(true) : null;
+            if (text == null) return;
+            text.text = caption;
+            text.color = GroundStation.DigitalTwin.TwinHudTheme.TextPrimary;
+        }
+
         private void OnSpeedUp()
         {
-            if (drone != null)
-                drone.MoveSpeed = drone.MoveSpeed + speedStep;
+            Adjust(true, 1);
         }
 
         private void OnSpeedDown()
         {
-            if (drone != null)
-                drone.MoveSpeed = drone.MoveSpeed - speedStep;
+            Adjust(true, -1);
         }
 
         private void OnAltitudeUp()
         {
-            if (drone != null)
-                drone.AddAltitude(altitudeStep);
+            Adjust(false, 1);
         }
 
         private void OnAltitudeDown()
         {
-            if (drone != null)
-                drone.AddAltitude(-altitudeStep);
+            Adjust(false, -1);
+        }
+
+        private void Adjust(bool speed, int direction)
+        {
+            if (_remote == null) _remote = FindObjectOfType<DigitalTwinRemoteState>();
+            if (_commands == null) _commands = FindObjectOfType<DigitalTwinCommandEgress>();
+            if (_remote != null && _remote.IsReplay) return;
+            if (GroundStationMode.IsLive(_remote))
+            {
+                if (!_remote.HasFreshTelemetry || _commands == null || _remote.Telemetry == null) return;
+                if (speed) _commands.SetSpeed(_remote.Telemetry.speedMps + direction * speedStep);
+                else _commands.SetAltitude(_remote.Telemetry.altitudeM + direction * altitudeStep);
+            }
+            else if (drone != null)
+            {
+                if (speed) drone.MoveSpeed += direction * speedStep;
+                else drone.AddAltitude(direction * altitudeStep);
+            }
         }
 
         private void RefreshLabels()
         {
+            if (_remote == null) _remote = FindObjectOfType<DigitalTwinRemoteState>();
+            if (GroundStationMode.IsLive(_remote) || (_remote != null && _remote.IsReplay))
+            {
+                if (speedLabel != null) speedLabel.text = _remote.HasFreshTelemetry ? _remote.LastSpeedText : "Hız: —";
+                if (altitudeLabel != null) altitudeLabel.text = _remote.HasFreshTelemetry ? _remote.LastAltitudeText : "Yükseklik: —";
+                return;
+            }
             if (drone == null) return;
-
             if (speedLabel != null)
                 speedLabel.text = string.Format("H\u0131z: {0:F1} m/s", drone.MoveSpeed);
 
@@ -114,10 +154,28 @@ namespace GroundStation.UI
 
         private void EnsureButtonLabelsAndStyle()
         {
-            StyleButton(speedUpButton, "H\u0131z Artt\u0131r");
-            StyleButton(speedDownButton, "H\u0131z Azalt");
-            StyleButton(altitudeUpButton, "Y\u00FCkseklik Artt\u0131r");
-            StyleButton(altitudeDownButton, "Y\u00FCkseklik Azalt");
+            StyleButton(speedUpButton, "Hız +");
+            StyleButton(speedDownButton, "Hız −");
+            StyleButton(altitudeUpButton, "İrtifa +");
+            StyleButton(altitudeDownButton, "İrtifa −");
+        }
+
+        private void ArrangeButtons()
+        {
+            if (GetComponent<RectTransform>() == null) return;
+            foreach (var layout in GetComponents<LayoutGroup>()) layout.enabled = false;
+            Button[] buttons = { speedUpButton, speedDownButton, altitudeUpButton, altitudeDownButton };
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                if (buttons[i] == null || buttons[i].transform.parent != transform) continue;
+                var rect = buttons[i].transform as RectTransform;
+                if (rect == null) continue;
+                int column = i % 2, row = i / 2;
+                rect.anchorMin = new Vector2(column * 0.5f, (1 - row) * 0.5f);
+                rect.anchorMax = rect.anchorMin + new Vector2(0.5f, 0.5f);
+                rect.offsetMin = new Vector2(8f, 8f);
+                rect.offsetMax = new Vector2(-8f, -8f);
+            }
         }
 
         private void StyleButton(Button button, string label)

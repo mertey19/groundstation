@@ -23,8 +23,12 @@ namespace GroundStation.DigitalTwin
         private Quaternion _targetRotation = Quaternion.identity;
 
         public bool HasRover => roverTransform != null;
+        public Vector2d LastGeo { get; private set; }
+        private float _lastPoseAt = -1f;
+        public bool HasRecentPose => _lastPoseAt >= 0f && Time.unscaledTime - _lastPoseAt <= 5f;
         /// <summary>Haritada hareket eden gercek rover objesi (geofence/mesafe kontrolleri icin).</summary>
         public Transform RoverTransform => roverTransform;
+        public void ResetPoseFreshness() { _lastPoseAt = -1f; _hasTarget = false; }
 
         private void Awake()
         {
@@ -37,7 +41,7 @@ namespace GroundStation.DigitalTwin
 
         private void Update()
         {
-            if (!smoothPoseUpdates || !_hasTarget || roverTransform == null)
+            if (!smoothPoseUpdates || !_hasTarget || !HasRecentPose || roverTransform == null)
                 return;
 
             float dt = Time.unscaledDeltaTime;
@@ -85,6 +89,8 @@ namespace GroundStation.DigitalTwin
                     roverTransform.rotation = rot;
                 }
 
+                LastGeo = geo;
+                _lastPoseAt = Time.unscaledTime;
                 return true;
             }
             catch

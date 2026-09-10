@@ -445,10 +445,10 @@ namespace GroundStation.DigitalTwin
 
             if (jsonTelemetryOverride != null && jsonTelemetryOverride.UseJsonTelemetry)
             {
-                if (altitudeText != null && !string.IsNullOrEmpty(jsonTelemetryOverride.LastAltitudeText))
-                    altitudeText.text = jsonTelemetryOverride.LastAltitudeText;
-                if (speedText != null && !string.IsNullOrEmpty(jsonTelemetryOverride.LastSpeedText))
-                    speedText.text = jsonTelemetryOverride.LastSpeedText;
+                if (altitudeText != null)
+                    altitudeText.text = jsonTelemetryOverride.HasFreshTelemetry ? jsonTelemetryOverride.LastAltitudeText : "Yükseklik: —";
+                if (speedText != null)
+                    speedText.text = jsonTelemetryOverride.HasFreshTelemetry ? jsonTelemetryOverride.LastSpeedText : "Hız: —";
                 if (modeText != null && !string.IsNullOrEmpty(jsonTelemetryOverride.LastModeText))
                 {
                     string mode = jsonTelemetryOverride.LastModeText;

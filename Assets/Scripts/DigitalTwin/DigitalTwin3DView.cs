@@ -50,6 +50,18 @@ namespace GroundStation.DigitalTwin
         private bool _initialized;
         private bool _cameraCreatedByUs;
         private bool _textureCreatedByUs;
+        private bool _siteView;
+        private readonly Vector3[] _viewportCorners = new Vector3[4];
+        public Camera RenderCamera { get { EnsureCameraAndTexture(); return twinCamera; } }
+        public RawImage ViewportImage { get { EnsureCameraAndTexture(); return targetRawImage; } }
+        public bool IsSiteView => _siteView;
+
+        public void SetSiteView(bool active)
+        {
+            EnsureCameraAndTexture();
+            _siteView = active;
+            if (twinCamera != null) twinCamera.enabled = isActiveAndEnabled;
+        }
 
         private void Awake()
         {
@@ -125,12 +137,15 @@ namespace GroundStation.DigitalTwin
         {
             if (_routeView == null) _routeView = GetComponentInChildren<DigitalTwinRouteView>(true);
             if (_droneView == null) _droneView = GetComponentInChildren<DigitalTwinDroneView>(true);
-            if (_routeView != null) _routeView.gameObject.SetActive(visible);
+            // The route component can share the viewport object. Never disable its parent.
+            if (_routeView != null) _routeView.enabled = visible;
             if (_droneView != null) _droneView.gameObject.SetActive(visible);
         }
 
         private void LateUpdate()
         {
+            ResizeTextureToViewport();
+            if (_siteView) return;
             if (twinCamera == null) return;
 
             // Drone referansi kaybolmussa yeniden bulmaya calis.
@@ -171,6 +186,25 @@ namespace GroundStation.DigitalTwin
             _currentCameraPosition = Vector3.Lerp(_currentCameraPosition, desiredPos, t);
             twinCamera.transform.position = _currentCameraPosition;
             twinCamera.transform.LookAt(dronePos + Vector3.up * 5f);
+        }
+
+        private void ResizeTextureToViewport()
+        {
+            if (!_textureCreatedByUs || renderTexture == null || targetRawImage == null) return;
+            var corners = _viewportCorners;
+            targetRawImage.rectTransform.GetWorldCorners(corners);
+            var canvas = targetRawImage.canvas;
+            Camera uiCamera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay ? canvas.worldCamera : null;
+            Vector2 a = RectTransformUtility.WorldToScreenPoint(uiCamera, corners[0]);
+            Vector2 b = RectTransformUtility.WorldToScreenPoint(uiCamera, corners[2]);
+            int w = Mathf.Clamp(Mathf.RoundToInt(Mathf.Abs(b.x - a.x)), 64, 2560);
+            int h = Mathf.Clamp(Mathf.RoundToInt(Mathf.Abs(b.y - a.y)), 64, 2560);
+            if (renderTexture.width == w && renderTexture.height == h) return;
+            renderTexture.Release();
+            renderTexture.width = w;
+            renderTexture.height = h;
+            renderTexture.Create();
+            if (twinCamera != null) twinCamera.aspect = (float)w / h;
         }
 
         private void SetFallbackCameraPosition()

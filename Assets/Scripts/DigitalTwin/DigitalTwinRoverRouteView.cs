@@ -26,6 +26,7 @@ namespace GroundStation.DigitalTwin
         private Material _markerMat;
 
         public int WaypointCount => _geoPoints.Count;
+        public List<Vector2d> CopyRoute() => new List<Vector2d>(_geoPoints);
 
         private void Awake()
         {

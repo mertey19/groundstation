@@ -83,12 +83,8 @@ namespace GroundStation.DigitalTwin
 
             _is3DModeActive = true;
 
-            // Drone ile taranan saha: net orthophoto + low-poly agac + bina (HTML twin kalitesi).
-            // (Taranmamis bolgede Mapbox ham uydusu guzel twin vermedigi icin sabit saha kullaniyoruz.)
-            var simurghSite = FindObjectOfType<SimurghSiteImporter>();
-            if (simurghSite == null)
-                simurghSite = new GameObject("SimurghSite").AddComponent<SimurghSiteImporter>();
-            simurghSite.Show();
+            // The workspace explicitly chooses measured live geometry or a reference
+            // survey. A preloaded orthophoto must not stand in for a live reconstruction.
         }
 
         public void Disable3DForTwin()

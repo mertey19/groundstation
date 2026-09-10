@@ -159,7 +159,7 @@ namespace GroundStation.DigitalTwin
             // null-normalizasyonu boylece SLAM fallback'ini ve kaynak rozetini tetikler.
             if (stripGpsPose)
                 json = RemoveJsonBlock(json, "pose");
-            _ingress.TryApplyDigitalTwinJson(json);
+            (_ingress as DigitalTwinJsonPoseBridge)?.TryApplySampleJson(json);
         }
 
         // Rover'in cektigi karekod fotografini simule eden kucuk uretilmis JPEG:
@@ -427,18 +427,20 @@ namespace GroundStation.DigitalTwin
 
         private void OnGUI()
         {
-            if (!showHud) return;
+            if (!showHud || !DigitalTwinHudWorkspace.Shows(DigitalTwinHudWorkspace.Detail.Demo)) return;
             TwinHudTheme.BeginScaledHud();
-            float w = 344f, h = 78f;
+            float w = 344f, h = 126f;
             Vector2 def = new Vector2((TwinHudTheme.ScreenW - w) * 0.5f, TwinHudTheme.ScreenH - h - 60f);
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_demo_v2");
+            Rect r = DigitalTwinHudWorkspace.Instance != null
+                ? DigitalTwinHudWorkspace.Instance.DetailRect(w, h)
+                : TwinHudTheme.Drag(ref _hudPos, ref _drag, def, w, h, "twinhud_demo_v2");
             TwinHudTheme.Panel(r);
 
             float x = r.x + 16f, y = r.y + 12f;
-            GUI.Label(new Rect(x, y, w - 130f, 18f), "DEMO SENARYO", TwinHudTheme.Title);
+            GUI.Label(new Rect(x, y, w - 32f, 18f), "DEMO SENARYO", TwinHudTheme.Title);
             if (_phaseStyle == null) _phaseStyle = new GUIStyle(TwinHudTheme.Small) { alignment = TextAnchor.MiddleRight, fontStyle = FontStyle.Bold, normal = { textColor = TwinHudTheme.Accent } };
-            GUI.Label(new Rect(x, y, w - 32f, 18f), PhaseLabelTr(_phase), _phaseStyle);
-            y += 25f;
+            GUI.Label(new Rect(x, y + 24f, w - 32f, 18f), PhaseLabelTr(_phase), _phaseStyle);
+            y += 49f;
 
             var bar = new Rect(x, y, w - 32f, 9f);
             TwinHudTheme.Fill(bar, new Color(1f, 1f, 1f, 0.10f), 4.5f);

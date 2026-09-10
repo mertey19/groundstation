@@ -43,73 +43,82 @@ namespace GroundStation.DigitalTwin
 
         private void OnGUI()
         {
+            if (!DigitalTwinHudWorkspace.Shows(DigitalTwinHudWorkspace.Detail.Mesh)) return;
             if (remoteState == null) return;
-            var mesh = remoteState.HasMeshStatus ? remoteState.LastMeshStatus : null;
-            if (mesh == null && !showWhenNoData) return;
+            bool fresh = remoteState.HasFreshMesh;
+            var mesh = fresh ? remoteState.LastMeshStatus : null;
+            if (mesh == null && !showWhenNoData && !DigitalTwinHudWorkspace.IsSelected(DigitalTwinHudWorkspace.Detail.Mesh)) return;
 
             TwinHudTheme.BeginScaledHud();
-            float w = TwinHudTheme.LeftPanelWidth, h = 268f;
-            Rect r = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_mesh_v4");
-            TwinHudTheme.Panel(r);
+            float w = TwinHudTheme.LeftPanelWidth;
+            float h = fresh ? 330f : 268f;
+            Rect panel = TwinHudTheme.Drag(ref _hudPos, ref _drag, TwinHudTheme.HudColumn.Left, w, h, "twinhud_mesh_v5");
+            TwinHudTheme.Panel(panel);
 
-            float x = r.x + 16f, y = r.y + 12f;
-            GUI.Label(new Rect(x, y, r.width - 96f, 18f), "MESH AĞI", TwinHudTheme.Title);
-            var badge = new Rect(r.x + r.width - 92f, y - 1f, 76f, 17f);
-            TwinHudTheme.Fill(badge, new Color(0.18f, 0.34f, 0.52f, 0.75f), 8f);
-            GUI.Label(badge, "802.11s", TwinHudTheme.Badge);
-            y += 23f;
-            TwinHudTheme.Separator(x, y, w - 32f);
-            y += 8f;
-
-            float cx = r.x + w * 0.5f;
-            Vector2 uav = new Vector2(cx, y + 26f);
-            Vector2 rover = new Vector2(r.x + 60f, y + 82f);
-            Vector2 yki = new Vector2(r.x + w - 60f, y + 82f);
-
-            bool has = mesh != null;
-            float link = has ? mesh.linkQualityPercent : 0f;
-            bool relay = has && mesh.relayModeActive;
-            Color lc = TwinHudTheme.Quality(link);
-            Color dim = new Color(1f, 1f, 1f, 0.12f);
-
-            if (relay)
+            // Local coordinates keep the entire diagram inside its own clipping boundary.
+            GUI.BeginGroup(panel);
+            try
             {
-                TwinHudTheme.Line(rover, uav, lc, 3.5f); AnimDot(rover, uav);
-                TwinHudTheme.Line(uav, yki, lc, 3.5f); AnimDot(uav, yki);
-                TwinHudTheme.Line(rover, yki, new Color(1f, 0.45f, 0.40f, 0.20f), 2f);
+                GUI.Label(new Rect(16f, 12f, w - 112f, 20f), "MESH AĞI", TwinHudTheme.Title);
+                var badge = new Rect(w - 92f, 12f, 76f, 19f);
+                TwinHudTheme.Fill(badge, new Color(0.18f, 0.34f, 0.52f, 0.5f), 9f);
+                GUI.Label(badge, "802.11s", TwinHudTheme.Badge);
+                TwinHudTheme.Separator(16f, 39f, w - 32f);
+
+                var diagram = new Rect(16f, 49f, w - 32f, 144f);
+                TwinHudTheme.Fill(diagram, new Color(0.08f, 0.12f, 0.17f, 0.65f), 10f);
+                Vector2 uav = new Vector2(w * 0.5f, 81f);
+                Vector2 rover = new Vector2(66f, 156f);
+                Vector2 station = new Vector2(w - 66f, 156f);
+                bool relay = fresh && mesh.relayModeActive;
+                Color active = fresh ? TwinHudTheme.Quality(mesh.linkQualityPercent) : new Color(0.36f, 0.44f, 0.55f, 0.5f);
+                Color muted = new Color(0.36f, 0.44f, 0.55f, 0.25f);
+
+                Connection(rover, uav, relay ? active : muted, fresh && relay);
+                Connection(uav, station, active, fresh);
+                Connection(rover, station, relay ? muted : active, fresh && !relay);
+                Node(uav, TwinHudTheme.Gps, "İHA");
+                Node(rover, TwinHudTheme.Slam, "Rover");
+                Node(station, TwinHudTheme.Good, "YKİ");
+
+                var status = new Rect(16f, 203f, w - 32f, h - 219f);
+                TwinHudTheme.Fill(status, new Color(0.10f, 0.15f, 0.21f, 0.68f), 8f);
+                if (fresh)
+                {
+                    GUI.Label(new Rect(28f, 211f, 182f, 20f), relay ? "İHA üzerinden aktarım" : "Doğrudan bağlantı", TwinHudTheme.Label);
+                    var quality = new Rect(w - 110f, 211f, 80f, 20f);
+                    TwinHudTheme.Fill(quality, new Color(active.r, active.g, active.b, 0.2f), 6f);
+                    GUI.Label(quality, string.Format("%{0:F0} kalite", mesh.linkQualityPercent), TwinHudTheme.Badge);
+                    GUI.Label(new Rect(28f, 238f, w - 56f, 16f), string.Format("{0} hop  ·  RSSI {1:F0} dBm  ·  SNR {2:F0} dB", mesh.hopCount, mesh.signalDbm, mesh.snrDb), TwinHudTheme.Small);
+                    GUI.Label(new Rect(28f, 257f, w - 56f, 16f), string.Format("Gecikme {0:F0} ms  ·  Kayıp %{1:F1}", mesh.latencyMs, mesh.packetLossPercent), TwinHudTheme.Small);
+                    var bar = new Rect(28f, 279f, w - 56f, 5f);
+                    TwinHudTheme.Fill(bar, new Color(1f, 1f, 1f, 0.08f), 2f);
+                    float filled = bar.width * Mathf.Clamp01(mesh.linkQualityPercent / 100f);
+                    if (filled > 0f) TwinHudTheme.Fill(new Rect(bar.x, bar.y, filled, bar.height), active, 2f);
+                    DrawSparkline(new Rect(28f, 291f, w - 56f, 14f));
+                }
+                else
+                {
+                    TwinHudTheme.Dot(new Rect(28f, 219f, 6f, 6f), TwinHudTheme.TextSecondary);
+                    GUI.Label(new Rect(42f, 210f, w - 70f, 19f), remoteState.HasMeshStatus ? "Mesh verisi güncel değil" : "Mesh verisi bekleniyor", TwinHudTheme.Label);
+                    GUI.Label(new Rect(42f, 231f, w - 70f, 15f), "Bağlantılar veri geldiğinde güncellenir.", TwinHudTheme.Small);
+                }
             }
-            else
+            finally
             {
-                TwinHudTheme.Line(rover, yki, has ? lc : dim, 3.5f); if (has) AnimDot(rover, yki);
-                TwinHudTheme.Line(uav, yki, has ? lc : dim, 3.5f); if (has) AnimDot(uav, yki);
-                TwinHudTheme.Line(rover, uav, dim, 2f);
+                GUI.EndGroup();
+                TwinHudTheme.EndScaledHud();
             }
+        }
 
-            Node(uav, TwinHudTheme.Gps, "İHA");
-            Node(rover, TwinHudTheme.Slam, "Rover");
-            Node(yki, TwinHudTheme.Good, "YKİ");
-
-            float my = y + 118f;
-            if (has)
-            {
-                string modeTxt = relay ? "<color=#FFD24A>RELAY · İHA üzerinden</color>" : "<color=#66E68A>DIRECT</color>";
-                GUI.Label(new Rect(x, my, w - 32f, 18f), string.Format("Hop {0}    ·    Link %{1:F0}    ·    {2}", mesh.hopCount, mesh.linkQualityPercent, modeTxt), TwinHudTheme.Label);
-                GUI.Label(new Rect(x, my + 19f, w - 32f, 16f), string.Format("RSSI {0:F0} dBm   SNR {1:F0} dB   Gecikme {2:F0} ms   Kayıp %{3:F1}", mesh.signalDbm, mesh.snrDb, mesh.latencyMs, mesh.packetLossPercent), TwinHudTheme.Small);
-
-                var bar = new Rect(x, my + 38f, w - 32f, 6f);
-                TwinHudTheme.Fill(bar, new Color(1f, 1f, 1f, 0.10f), 3f);
-                TwinHudTheme.Fill(new Rect(bar.x, bar.y, bar.width * Mathf.Clamp01(link / 100f), bar.height), lc, 3f);
-
-                // Link kalitesi trendi (sparkline) — MissionEngine gecmisinden.
-                DrawSparkline(new Rect(x, my + 50f, w - 32f, 26f));
-                GUI.Label(new Rect(x, my + 76f, w - 32f, 14f), "link geçmişi", new GUIStyle(TwinHudTheme.Small) { fontSize = 10 });
-            }
-            else
-            {
-                GUI.Label(new Rect(x, my + 14f, w - 32f, 18f), "Mesh verisi bekleniyor…", TwinHudTheme.Small);
-            }
-
-            TwinHudTheme.EndScaledHud();
+        private static void Connection(Vector2 from, Vector2 to, Color color, bool animate)
+        {
+            // Stop at the outside of each node, with equal space around all three links.
+            Vector2 direction = (to - from).normalized;
+            Vector2 a = from + direction * 25f;
+            Vector2 b = to - direction * 25f;
+            TwinHudTheme.Line(a, b, color, animate ? 2.5f : 1.5f);
+            if (animate) AnimDot(a, b);
         }
 
         private void DrawSparkline(Rect area)
@@ -124,12 +133,11 @@ namespace GroundStation.DigitalTwin
             int step = Mathf.Max(1, count / 64);
             Vector2 prev = Vector2.zero;
             bool hasPrev = false;
-            int idx = 0;
-            for (int i = 0; i < count; i += step, idx++)
+            for (int i = 0; i < count; i += step)
             {
                 var s = hist[i];
-                float fx = area.x + area.width * ((float)i / Mathf.Max(1, count - 1));
-                float fy = area.yMax - area.height * Mathf.Clamp01(s.linkQualityPercent / 100f);
+                float fx = area.x + 2f + (area.width - 4f) * ((float)i / Mathf.Max(1, count - 1));
+                float fy = area.yMax - 2f - (area.height - 4f) * Mathf.Clamp01(s.linkQualityPercent / 100f);
                 var p = new Vector2(fx, fy);
                 if (hasPrev)
                     TwinHudTheme.Line(prev, p, TwinHudTheme.Quality(s.linkQualityPercent), 1.6f);
@@ -144,14 +152,15 @@ namespace GroundStation.DigitalTwin
             TwinHudTheme.Dot(new Rect(p.x - 3.5f, p.y - 3.5f, 7f, 7f), Color.white);
         }
 
-        private void Node(Vector2 pos, Color col, string label)
+        private void Node(Vector2 pos, Color color, string label)
         {
-            float rad = 20f;
-            TwinHudTheme.Dot(new Rect(pos.x - rad - 3f, pos.y - rad - 3f, (rad + 3f) * 2f, (rad + 3f) * 2f), new Color(col.r, col.g, col.b, 0.22f));
-            TwinHudTheme.Dot(new Rect(pos.x - rad, pos.y - rad, rad * 2f, rad * 2f), col);
-            TwinHudTheme.Dot(new Rect(pos.x - rad * 0.6f, pos.y - rad * 0.6f, rad * 1.2f, rad * 1.2f), new Color(0.05f, 0.07f, 0.11f, 0.96f));
-            if (_nodeStyle == null) _nodeStyle = new GUIStyle(TwinHudTheme.Badge) { fontSize = 11 };
-            GUI.Label(new Rect(pos.x - 34f, pos.y - 8f, 68f, 16f), label, _nodeStyle);
+            const float radius = 22f;
+            TwinHudTheme.Dot(new Rect(pos.x - 26f, pos.y - 26f, 52f, 52f), new Color(color.r, color.g, color.b, 0.10f));
+            TwinHudTheme.Dot(new Rect(pos.x - radius, pos.y - radius, radius * 2f, radius * 2f), color);
+            TwinHudTheme.Dot(new Rect(pos.x - 19f, pos.y - 19f, 38f, 38f), new Color(0.055f, 0.085f, 0.13f, 1f));
+            if (_nodeStyle == null)
+                _nodeStyle = new GUIStyle(TwinHudTheme.Badge) { fontSize = 11, clipping = TextClipping.Clip };
+            GUI.Label(new Rect(pos.x - 22f, pos.y - 10f, 44f, 20f), label, _nodeStyle);
         }
     }
 }

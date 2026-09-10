@@ -23,6 +23,61 @@ namespace Mapbox.Unity.MeshGeneration.Data
 		public float[] HeightData;
 
 		private Texture2D _loadingTexture;
+        private string _rasterSource;
+        private CanonicalTileId _rasterTileId;
+        public bool HasRasterVisual { get; private set; }
+        public int RasterVisualZoom { get; private set; } = -1;
+
+        // Never expose the untextured terrain or an image from a recycled tile.
+        public void PrepareRaster(string source)
+        {
+            if (_rasterSource != source || _rasterTileId != CanonicalTileId)
+            {
+                HasRasterVisual = false;
+                RasterVisualZoom = -1;
+            }
+            _rasterSource = source;
+            _rasterTileId = CanonicalTileId;
+            MeshRenderer.enabled = HasRasterVisual;
+        }
+
+        public bool SetRasterFallback(byte[] data, CanonicalTileId parent)
+        {
+            int levels = CanonicalTileId.Z - parent.Z;
+            if (levels < 0 || levels > 22 || parent.Z <= RasterVisualZoom) return false;
+            int size = 1 << levels;
+            if (CanonicalTileId.X / size != parent.X || CanonicalTileId.Y / size != parent.Y) return false;
+            if (!ApplyRasterImage(data, true, false)) return false;
+            MeshRenderer.sharedMaterial.mainTextureScale = Vector2.one / size;
+            // Mapbox terrain UVs have V=0 at the north edge (XYZ row order).
+            MeshRenderer.sharedMaterial.mainTextureOffset = new Vector2(
+                (CanonicalTileId.X % size) / (float)size, (CanonicalTileId.Y % size) / (float)size);
+            RasterVisualZoom = parent.Z;
+            return true;
+        }
+
+        private bool ApplyRasterImage(byte[] data, bool mipMap, bool compress)
+        {
+            if (data == null || data.Length == 0) return false;
+            var candidate = new Texture2D(2, 2, TextureFormat.RGB24, mipMap);
+            candidate.wrapMode = TextureWrapMode.Clamp;
+            if (!candidate.LoadImage(data) || candidate.width < 2 || candidate.height < 2)
+            {
+                candidate.Destroy();
+                return false;
+            }
+            if (compress) candidate.Compress(false);
+            var previous = _rasterData;
+            _rasterData = candidate;
+            var material = MeshRenderer.sharedMaterial;
+            material.mainTexture = candidate;
+            material.mainTextureScale = Vector2.one;
+            material.mainTextureOffset = Vector2.zero;
+            HasRasterVisual = true;
+            MeshRenderer.enabled = true;
+            if (previous != null) previous.Destroy();
+            return true;
+        }
 		//keeping track of tile objects to be able to cancel them safely if tile is destroyed before data fetching finishes
 		private List<Tile> _tiles = new List<Tile>();
 		[SerializeField] private float _tileScale;
@@ -182,6 +237,9 @@ namespace Mapbox.Unity.MeshGeneration.Data
 			UnwrappedTileId = tileId;
 			CanonicalTileId = tileId.Canonical;
 			_loadingTexture = loadingTexture;
+            HasRasterVisual = false;
+            RasterVisualZoom = -1;
+            MeshRenderer.enabled = false;
 
 			float scaleFactor = 1.0f;
 			if (_isInitialized == false)
@@ -277,36 +335,27 @@ namespace Mapbox.Unity.MeshGeneration.Data
 			}
 		}
 
-		public void SetRasterData(byte[] data, bool useMipMap = true, bool useCompression = false)
-		{
-			// Don't leak the texture, just reuse it.
-			if (RasterDataState != TilePropertyState.Unregistered)
-			{
-				//reset image on null data
-				if (data == null)
-				{
-					MeshRenderer.material.mainTexture = null;
-					return;
-				}
-
-				if (_rasterData == null)
-				{
-					_rasterData = new Texture2D(0, 0, TextureFormat.RGB24, useMipMap);
-					_rasterData.wrapMode = TextureWrapMode.Clamp;
-				}
-
-				_rasterData.LoadImage(data);
-				if (useCompression)
-				{
-					// High quality = true seems to decrease image quality?
-					_rasterData.Compress(false);
-				}
-
-				MeshRenderer.sharedMaterial.mainTexture = _rasterData;
-
-				RasterDataState = TilePropertyState.Loaded;
-			}
-		}
+        public void SetRasterData(byte[] data, bool useMipMap = true, bool useCompression = false)
+        {
+            if (RasterDataState == TilePropertyState.Unregistered) return;
+            if (data == null)
+            {
+                HasRasterVisual = false;
+                RasterVisualZoom = -1;
+                MeshRenderer.sharedMaterial.mainTexture = null;
+                MeshRenderer.sharedMaterial.mainTextureScale = Vector2.one;
+                MeshRenderer.sharedMaterial.mainTextureOffset = Vector2.zero;
+                MeshRenderer.enabled = true; // Imagery disabled: terrain-only mode is intentional.
+                return;
+            }
+            if (!ApplyRasterImage(data, useMipMap, useCompression))
+            {
+                RasterDataState = TilePropertyState.Error;
+                return;
+            }
+            RasterVisualZoom = CanonicalTileId.Z;
+            RasterDataState = TilePropertyState.Loaded;
+        }
 
 		public void SetVectorData(VectorTile vectorTile)
 		{

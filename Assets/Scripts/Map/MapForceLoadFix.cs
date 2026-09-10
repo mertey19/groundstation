@@ -38,6 +38,13 @@ namespace GroundStation.Map
             }
 
             abstractMap.OnInitialized += OnMapInitialized;
+            var mapCam = ResolveMapCamera();
+            if (mapCam != null)
+            {
+                var continuity = mapCam.GetComponent<MapImageContinuity>();
+                if (continuity == null) continuity = mapCam.gameObject.AddComponent<MapImageContinuity>();
+                continuity.SetMap(abstractMap);
+            }
         }
 
         private void OnDestroy()
@@ -69,6 +76,12 @@ namespace GroundStation.Map
             if (abstractMap == null) return;
 
             Camera mapCam = ResolveMapCamera();
+            if (mapCam != null)
+            {
+                var continuity = mapCam.GetComponent<MapImageContinuity>();
+                if (continuity == null) continuity = mapCam.gameObject.AddComponent<MapImageContinuity>();
+                continuity.SetMap(abstractMap);
+            }
 
             CameraBoundsTileProviderOptions cb = null;
             if (fixCameraBoundsMapCamera && abstractMap.Options?.extentOptions != null &&
@@ -99,8 +112,7 @@ namespace GroundStation.Map
                     var r = cam.rect;
                     if (r.x > 0.001f || r.y > 0.001f || r.width < 0.999f || r.height < 0.999f)
                         Debug.LogWarning($"[MapForceLoadFix] Kamera viewport tam ekran degildi ({cam.name} rect={r}). Tam ekrana cekildi.");
-                    cam.rect = new Rect(0f, 0f, 1f, 1f);
-                    cam.transform.hasChanged = true;
+                    NormalizeViewport(cam);
                 }
             }
 
@@ -113,12 +125,11 @@ namespace GroundStation.Map
             if (abstractMap == null || abstractMap.Options == null || abstractMap.Options.extentOptions == null)
                 return;
 
-            if (continuousEnforceViewport && fixMapCameraViewportRect)
-                ForceFullScreenViewports();
-
             if (Time.unscaledTime >= _nextTileRefreshTime)
             {
                 _nextTileRefreshTime = Time.unscaledTime + Mathf.Max(0.1f, tileRefreshIntervalSeconds);
+                if (continuousEnforceViewport && fixMapCameraViewportRect)
+                    ForceFullScreenViewports();
                 if (abstractMap.TileProvider != null)
                     abstractMap.TileProvider.UpdateTileExtent();
             }
@@ -146,9 +157,16 @@ namespace GroundStation.Map
 
             foreach (var cam in toNormalize)
             {
-                cam.rect = new Rect(0f, 0f, 1f, 1f);
-                cam.transform.hasChanged = true;
+                NormalizeViewport(cam);
             }
+        }
+
+        private static void NormalizeViewport(Camera cam)
+        {
+            var full = new Rect(0f, 0f, 1f, 1f);
+            if (cam.rect == full) return;
+            cam.rect = full;
+            cam.transform.hasChanged = true;
         }
 
         private static Camera ResolveMapCamera()

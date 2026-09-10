@@ -216,8 +216,11 @@ namespace GroundStation.DigitalTwin
     {
         public int index = -1;
         public string operation = "";
-        public float latitude;
-        public float longitude;
+        public double latitude;
+        public double longitude;
         public float altitudeM = 10f;
+        public float speedMps = -1f;
+        public float holdSeconds;
+        public string action = "";
     }
 }

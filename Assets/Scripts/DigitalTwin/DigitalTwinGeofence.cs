@@ -17,7 +17,7 @@ namespace GroundStation.DigitalTwin
     public class DigitalTwinGeofence : MonoBehaviour
     {
         [Header("Saha tanimi")]
-        [Tooltip("Acik ise merkez ilk gecerli arac pozundan (yoksa harita merkezinden) alinir.")]
+        [Tooltip("Merkez ilk alınan geçerli araç konumundan belirlenir.")]
         [SerializeField] private bool autoCenterOnFirstFix = true;
         [SerializeField] private double centerLat;
         [SerializeField] private double centerLon;
@@ -42,12 +42,16 @@ namespace GroundStation.DigitalTwin
         public bool HasCenter { get; private set; }
         public bool UavBreached { get; private set; }
         public bool RoverBreached { get; private set; }
-        public bool AnyBreached => UavBreached || RoverBreached;
+        public bool AnyBreached => (watchUav && _poseBridge != null && _poseBridge.HasRecentUavPose && UavBreached)
+            || (watchRover && _rover != null && _rover.HasRecentPose && RoverBreached);
+        public bool HasUavPositionFix => watchUav && _poseBridge != null && _poseBridge.HasRecentUavPose;
+        public bool HasPositionFix => (watchUav && _poseBridge != null && _poseBridge.HasRecentUavPose)
+            || (watchRover && _rover != null && _rover.HasRecentPose);
         public float RadiusMeters => radiusMeters;
         /// <summary>(aracAdi, ihlalDurumu) — durum degisiminde tetiklenir.</summary>
         public event Action<string, bool> OnBreachChanged;
 
-        private DroneWaypointFollower _drone;
+        private DigitalTwinJsonPoseBridge _poseBridge;
         private DigitalTwinRoverAdapter _rover;
         private LineRenderer _circle;
         private float _nextCheckAt;
@@ -94,7 +98,7 @@ namespace GroundStation.DigitalTwin
             {
                 _nextResolveAt = Time.unscaledTime + 2f;
                 if (abstractMap == null) abstractMap = FindObjectOfType<AbstractMap>();
-                if (_drone == null) _drone = FindObjectOfType<DroneWaypointFollower>();
+                if (_poseBridge == null) _poseBridge = FindObjectOfType<DigitalTwinJsonPoseBridge>();
                 if (_rover == null) _rover = FindObjectOfType<DigitalTwinRoverAdapter>();
                 if (missionEngine == null) missionEngine = FindObjectOfType<DigitalTwinMissionEngine>();
                 if (remoteState == null) remoteState = FindObjectOfType<DigitalTwinRemoteState>();
@@ -111,21 +115,16 @@ namespace GroundStation.DigitalTwin
             if (Time.unscaledTime < _nextCheckAt) return;
             _nextCheckAt = Time.unscaledTime + Mathf.Max(0.1f, checkIntervalSeconds);
 
-            if (watchUav && _drone != null)
-                CheckVehicle("IHA", _drone.transform, ref _uavState, v => UavBreached = v);
-            if (watchRover && _rover != null && _rover.HasRover)
-                CheckVehicle("Rover", _rover.RoverTransform, ref _roverState, v => RoverBreached = v);
+            if (watchUav && _poseBridge != null && _poseBridge.HasRecentUavPose)
+                CheckVehicle("IHA", _poseBridge.LastUavGeo, ref _uavState, v => UavBreached = v);
+            if (watchRover && _rover != null && _rover.HasRecentPose)
+                CheckVehicle("Rover", _rover.LastGeo, ref _roverState, v => RoverBreached = v);
         }
 
         private bool _uavState, _roverState;
 
-        private void CheckVehicle(string label, Transform t, ref bool state, Action<bool> setter)
+        private void CheckVehicle(string label, Vector2d geo, ref bool state, Action<bool> setter)
         {
-            if (t == null) return;
-            Vector2d geo;
-            try { geo = abstractMap.WorldToGeoPosition(t.position); }
-            catch { return; }
-
             double dist = HaversineMeters(centerLat, centerLon, geo.x, geo.y);
             bool breached = dist > radiusMeters;
             if (breached == state) { setter(state); return; }
@@ -143,27 +142,11 @@ namespace GroundStation.DigitalTwin
 
         private void TryAutoCenter()
         {
-            // Oncelik: aracin gercek pozu; yoksa harita merkezi.
-            if (_drone != null)
-            {
-                try
-                {
-                    var geo = abstractMap.WorldToGeoPosition(_drone.transform.position);
-                    if (Math.Abs(geo.x) > 0.0001 || Math.Abs(geo.y) > 0.0001)
-                    {
-                        centerLat = geo.x; centerLon = geo.y;
-                        HasCenter = true; _circleDirty = true;
-                        return;
-                    }
-                }
-                catch { }
-            }
-            var c = abstractMap.CenterLatitudeLongitude;
-            if (!double.IsNaN(c.x) && !double.IsNaN(c.y) && (c.x != 0.0 || c.y != 0.0))
-            {
-                centerLat = c.x; centerLon = c.y;
-                HasCenter = true; _circleDirty = true;
-            }
+            // Scene placeholders and interpolated transforms are not position fixes.
+            if (watchUav && _poseBridge != null && _poseBridge.HasRecentUavPose)
+                SetFence(_poseBridge.LastUavGeo.x, _poseBridge.LastUavGeo.y, radiusMeters);
+            else if (watchRover && _rover != null && _rover.HasRecentPose)
+                SetFence(_rover.LastGeo.x, _rover.LastGeo.y, radiusMeters);
         }
 
         private void RebuildCircle()

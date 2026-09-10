@@ -422,7 +422,7 @@ namespace GroundStation.DigitalTwin
                         hasSlam, slamLat, slamLon, su + altitudeOffsetM, slamYaw,
                         hasSlam ? EstimateConfidence(i, map) : 0f,
                         speedMps, i, gt.Count);
-                    bridge.TryApplyDigitalTwinJson(json);
+                    bridge.TryApplySampleJson(json);
 
                     prevGe = ge; prevGn = gn; hasPrevGt = true;
                 }

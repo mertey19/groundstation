@@ -17,6 +17,7 @@ namespace GroundStation.DigitalTwin
         RejectedOldTimestamp,
         RejectedFutureTimestamp,
         MapOrDroneMissing,
+        ReplayActive,
         RouteApplyFailed
     }
 
@@ -50,17 +51,18 @@ namespace GroundStation.DigitalTwin
         [SerializeField] private float rotationLerpSpeed = 10f;
 
         [Header("Message Validation")]
-        [SerializeField] private bool validateSchemaVersion = true;
         [SerializeField] private bool rejectOutOfOrderSequence = true;
         [SerializeField] private bool rejectOlderTimestamps = true;
-        [SerializeField] private bool rejectFutureTimestamp = true;
         [SerializeField] private long maxFutureTimestampMs = 5000;
-        [SerializeField] private bool validateAuthToken;
+        [SerializeField] private bool validateAuthToken = true;
+        [SerializeField] private long maxPacketAgeMs = 5000;
+        private bool _localInput;
+        public bool IsReplaying { get; private set; }
+        public string LastAcceptedVehicle { get; private set; } = "";
+        public string LastAcceptedSource { get; private set; } = "";
+        public bool LastAcceptedForDisplay { get; private set; }
         [SerializeField] private string expectedAuthToken = "simurgh-2026";
 
-        [Header("Telemetry Timeout")]
-        [SerializeField] private bool clearJsonTelemetryWhenStale = true;
-        [SerializeField] private float jsonTelemetryTimeoutSeconds = 2.5f;
 
         // COKLU-KAYNAK dogrulama (PDF ortak harekat fazi): IHA + Rover ayni anda kendi
         // sayaclariyla gonderir. Global tek sayac ikinci aracin TUM mesajlarini
@@ -74,8 +76,17 @@ namespace GroundStation.DigitalTwin
         private readonly Dictionary<string, SourceValidationState> _sourceStates = new Dictionary<string, SourceValidationState>();
         [Tooltip("Kaynak bu kadar sn sustuktan sonra sequence/timestamp durumu sifirlanir (gonderici yeniden baslama toleransi).")]
         [SerializeField] private float sourceResetTimeoutSeconds = 10f;
-        private float _lastTelemetryReceivedAt = -1f;
         private bool _hasTargetPose;
+        private List<WaypointData> _routeBeforeReplay;
+        private Vector3 _positionBeforeReplay;
+        private Quaternion _rotationBeforeReplay;
+        private Vector3 _roverPositionBeforeReplay;
+        private Quaternion _roverRotationBeforeReplay;
+        private List<Vector2d> _roverRouteBeforeReplay;
+        public Vector2d LastUavGeo { get; private set; }
+        public float LastUavYaw { get; private set; }
+        private float _lastUavPoseAt = -1f;
+        public bool HasRecentUavPose => _lastUavPoseAt >= 0f && Time.unscaledTime - _lastUavPoseAt <= 5f;
         private Vector3 _targetPosition;
         private Quaternion _targetRotation = Quaternion.identity;
         private readonly Dictionary<string, TwinObstacleDelta> _obstacleState = new Dictionary<string, TwinObstacleDelta>();
@@ -122,7 +133,7 @@ namespace GroundStation.DigitalTwin
             if (drone == null)
                 return;
 
-            if (_hasTargetPose && smoothPoseUpdates)
+            if (_hasTargetPose && smoothPoseUpdates && HasRecentUavPose)
             {
                 float dt = Time.unscaledDeltaTime;
                 float posT = 1f - Mathf.Exp(-Mathf.Max(0.01f, positionLerpSpeed) * dt);
@@ -131,90 +142,116 @@ namespace GroundStation.DigitalTwin
                 drone.transform.rotation = Quaternion.Slerp(drone.transform.rotation, _targetRotation, rotT);
             }
 
-            if (clearJsonTelemetryWhenStale &&
-                jsonTelemetryTimeoutSeconds > 0f &&
-                _lastTelemetryReceivedAt > 0f &&
-                remoteState != null &&
-                remoteState.UseJsonTelemetry &&
-                Time.unscaledTime - _lastTelemetryReceivedAt > jsonTelemetryTimeoutSeconds)
-            {
-                remoteState.Clear();
-            }
+            // Each stream expires independently. Preserve mission/mesh state and
+            // show stale telemetry explicitly instead of falling back to simulation.
+
         }
 
         public bool TryApplyDigitalTwinJson(string json)
         {
-            if (string.IsNullOrWhiteSpace(json))
+            validateAuthToken = true;
+            if (IsReplaying && !_localInput)
             {
-                PublishStatus(DigitalTwinApplyStatusCode.InvalidJson, "JSON bos", 0, 0, "");
+                PublishStatus(DigitalTwinApplyStatusCode.ReplayActive, "Kayıt oynatılıyor; canlı veri uygulanmadı", 0, 0, "");
                 return false;
             }
-
-            json = json.Trim();
-            if (LooksLikeMessageV1(json))
+            try
             {
-                try
+                var root = Mapbox.Json.Linq.JObject.Parse(json ?? "");
+                if (root["schemaVersion"] == null)
                 {
-                    var msg = JsonUtility.FromJson<DigitalTwinMessageV1>(json);
-                    if (msg == null)
-                    {
-                        PublishStatus(DigitalTwinApplyStatusCode.InvalidJson, "JSON parse edilemedi", 0, 0, "");
-                        return false;
-                    }
-                    NormalizeMessage(msg, json);
-                    return ApplyMessageV1(msg);
-                }
-                catch
-                {
-                    PublishStatus(DigitalTwinApplyStatusCode.InvalidJson, "JSON parse exception", 0, 0, "");
+                    PublishStatus(DigitalTwinApplyStatusCode.InvalidSchema, "Sürümlü ve doğrulanmış mesaj gerekli", 0, 0, "");
                     return false;
                 }
+                var msg = root.ToObject<DigitalTwinMessageV1>();
+                foreach (string poseKey in new[] { "pose", "slamPose" })
+                    if (root[poseKey] is Mapbox.Json.Linq.JObject pose && (pose["latitude"] == null || pose["longitude"] == null))
+                        throw new System.FormatException("Poz enlem ve boylam içermeli");
+                // Field initializers and missing/null blocks are preserved by Json.NET.
+                if (msg.telemetry != null && root["telemetry"] is Mapbox.Json.Linq.JObject telemetry)
+                {
+                    if (telemetry["altitudeM"] == null || telemetry["speedMps"] == null || telemetry["mode"] == null)
+                        throw new System.FormatException("Telemetri için altitudeM, speedMps ve mode gerekli");
+                }
+                if (root["route"] is Mapbox.Json.Linq.JObject route && route["waypoints"] is Mapbox.Json.Linq.JArray waypoints)
+                    foreach (var waypoint in waypoints)
+                        if ((string)waypoint["operation"] != "remove" && (waypoint["latitude"] == null || waypoint["longitude"] == null))
+                            throw new System.FormatException("Waypoint enlem ve boylam içermeli");
+                return ApplyMessageV1(msg);
             }
+            catch (System.Exception e)
+            {
+                PublishStatus(DigitalTwinApplyStatusCode.InvalidJson, "Geçersiz mesaj: " + e.GetType().Name, 0, 0, "");
+                return false;
+            }
+        }
 
-            return TryApplyPoseJson(json);
+        // Local players opt in explicitly; an untrusted sourceId can never enable this path.
+        public bool TryApplySampleJson(string json)
+        {
+            if (IsReplaying || (!GroundStationMode.SimulationSelected && remoteState != null && remoteState.UseJsonTelemetry && !remoteState.IsSample)) return false;
+            if (remoteState != null) remoteState.IsSample = true;
+            _localInput = true;
+            try { return TryApplyDigitalTwinJson(json); }
+            finally { _localInput = false; }
+        }
+
+        public void BeginReplay()
+        {
+            if (IsReplaying) EndReplay();
+            if (routeManager != null)
+            {
+                _routeBeforeReplay = new List<WaypointData>();
+                if (routeManager.GetRouteData()?.waypoints != null)
+                    foreach (var wp in routeManager.GetRouteData().waypoints) _routeBeforeReplay.Add(wp.CloneWithIndex(wp.index));
+            }
+            if (drone != null) { _positionBeforeReplay = drone.transform.position; _rotationBeforeReplay = drone.transform.rotation; }
+            if (roverAdapter != null)
+            {
+                if (roverAdapter.RoverTransform != null)
+                { _roverPositionBeforeReplay = roverAdapter.RoverTransform.position; _roverRotationBeforeReplay = roverAdapter.RoverTransform.rotation; }
+                roverAdapter.ResetPoseFreshness();
+            }
+            _roverRouteBeforeReplay = roverRouteView != null ? roverRouteView.CopyRoute() : new List<Vector2d>();
+            IsReplaying = true;
+            _hasTargetPose = false;
+            _lastUavPoseAt = -1f;
+            foreach (var key in new List<string>(_sourceStates.Keys))
+                if (key.StartsWith("replay/")) _sourceStates.Remove(key);
+            if (drone != null) drone.StopRoute();
+            if (remoteState != null) remoteState.SetReplay(true);
+        }
+
+        public void EndReplay()
+        {
+            if (IsReplaying)
+            {
+                if (routeManager != null && _routeBeforeReplay != null) routeManager.ReplaceRoute(_routeBeforeReplay);
+                if (drone != null) drone.transform.SetPositionAndRotation(_positionBeforeReplay, _rotationBeforeReplay);
+                if (roverAdapter != null && roverAdapter.RoverTransform != null)
+                    roverAdapter.RoverTransform.SetPositionAndRotation(_roverPositionBeforeReplay, _roverRotationBeforeReplay);
+                if (roverRouteView != null) roverRouteView.SetRoute(_roverRouteBeforeReplay);
+                _routeBeforeReplay = null;
+            }
+            IsReplaying = false;
+            _hasTargetPose = false;
+            _lastUavPoseAt = -1f;
+            if (remoteState != null) remoteState.SetReplay(false);
+            if (roverAdapter != null) roverAdapter.ResetPoseFreshness();
+        }
+
+        public bool TryApplyReplayJson(string json)
+        {
+            if (!IsReplaying) return false;
+            _localInput = true;
+            try { return TryApplyDigitalTwinJson(json); }
+            finally { _localInput = false; }
         }
 
         public void ClearJsonTelemetryOverride()
         {
             if (remoteState != null)
                 remoteState.Clear();
-        }
-
-        private static bool LooksLikeMessageV1(string json)
-        {
-            return json.IndexOf("\"schemaVersion\"", System.StringComparison.Ordinal) >= 0
-                   || json.IndexOf("\"vehicleType\"", System.StringComparison.Ordinal) >= 0
-                   || json.IndexOf("\"missionPhase\"", System.StringComparison.Ordinal) >= 0
-                   || json.IndexOf("\"meshLink\"", System.StringComparison.Ordinal) >= 0
-                   || json.IndexOf("\"imagery\"", System.StringComparison.Ordinal) >= 0
-                   || (json.IndexOf("\"pose\"", System.StringComparison.Ordinal) >= 0
-                       && json.IndexOf("\"latitude\"", System.StringComparison.Ordinal) >= 0);
-        }
-
-        private static void NormalizeMessage(DigitalTwinMessageV1 msg, string rawJson)
-        {
-            if (msg == null)
-                return;
-
-            // JsonUtility tuzagi: [Serializable] class alanlari JSON'da YOKSA bile default
-            // instance olarak gelir (asla null degil). Bu, meshLink gondermeyen mesajlarin
-            // sahte hop=0 ornekleri uretmesine ve yalniz-telemetri mesajlarinin araci
-            // (0,0) koordinatina isinlamasina yol acar. Ham JSON'da blok anahtari yoksa
-            // alani null'a cekerek asagi katmanlardaki null-check'leri anlamli kiliyoruz.
-            // Not: JSON case-sensitive oldugu icin "\"pose\"" araması "slamPose" ile eslesmez.
-            if (rawJson != null)
-            {
-                if (rawJson.IndexOf("\"pose\"", System.StringComparison.Ordinal) < 0) msg.pose = null;
-                if (rawJson.IndexOf("\"slamPose\"", System.StringComparison.Ordinal) < 0) msg.slamPose = null;
-                if (rawJson.IndexOf("\"telemetry\"", System.StringComparison.Ordinal) < 0) msg.telemetry = null;
-                if (rawJson.IndexOf("\"meshLink\"", System.StringComparison.Ordinal) < 0) msg.meshLink = null;
-                if (rawJson.IndexOf("\"mission\"", System.StringComparison.Ordinal) < 0) msg.mission = null;
-                if (rawJson.IndexOf("\"route\"", System.StringComparison.Ordinal) < 0) msg.route = null;
-                if (rawJson.IndexOf("\"imagery\"", System.StringComparison.Ordinal) < 0) msg.imagery = null;
-            }
-
-            if (string.IsNullOrEmpty(msg.missionPhase) && msg.mission != null && !string.IsNullOrEmpty(msg.mission.phase))
-                msg.missionPhase = msg.mission.phase;
         }
 
         private bool ApplyMessageV1(DigitalTwinMessageV1 msg)
@@ -225,118 +262,21 @@ namespace GroundStation.DigitalTwin
                 return false;
             }
 
+            if (!_localInput && remoteState != null) remoteState.IsSample = false;
+            bool selected = remoteState == null || remoteState.IsSelectedSource(msg.vehicleType, msg.sourceId);
+            bool showPose = selected && (_localInput || !GroundStationMode.SimulationSelected);
             bool applied = false;
             bool isUavPayload = TwinVehicleTypes.IsUav(msg.vehicleType);
             bool isRoverPayload = TwinVehicleTypes.IsRover(msg.vehicleType);
-
-            if (isUavPayload && (msg.pose != null || msg.slamPose != null))
+            if (!selected && msg.route != null)
             {
-                if (abstractMap == null || drone == null)
-                {
-                    PublishStatus(DigitalTwinApplyStatusCode.MapOrDroneMissing, "Pose var ama map veya drone bagli degil", msg.sequenceId, msg.timestampMs, msg.sourceId);
-                    return false;
-                }
-
-                // Gorev gercegi (PDF 3.4.4): arac GPS ile ucar, VI-SLAM "golge modda" calisir.
-                // Drone GPS pozunu takip eder; GPS yoksa SLAM'e duser. Her iki konum da
-                // yorunge karsilastirma katmanina yayinlanir (GNSS-bagimsizlik kaniti).
-                bool poseApplied = false;
-                TwinPoseSource poseSource = TwinPoseSource.None;
-                if (msg.pose != null)
-                {
-                    poseApplied = ApplyVehiclePose(msg.pose);
-                    if (poseApplied) poseSource = TwinPoseSource.Gps;
-                    OnUavGpsPose?.Invoke(new Vector2d(msg.pose.latitude, msg.pose.longitude));
-                }
-                if (msg.slamPose != null)
-                {
-                    LastSlamConfidence = msg.slamPose.confidence;
-                    OnUavSlamPose?.Invoke(new Vector2d(msg.slamPose.latitude, msg.slamPose.longitude));
-                    if (!poseApplied)
-                    {
-                        // GPS kesildi: SLAM kestirimine dus (PDF gorev senaryosu).
-                        poseApplied = ApplySlamPose(msg.slamPose);
-                        if (poseApplied) poseSource = TwinPoseSource.Slam;
-                    }
-                }
-                if (poseApplied) SetPoseSource(poseSource);
-                applied |= poseApplied;
-            }
-            else if (isRoverPayload && (msg.pose != null || msg.slamPose != null))
-            {
-                bool roverApplied = false;
-                if (roverAdapter != null)
-                {
-                    if (msg.slamPose != null)
-                        roverApplied = roverAdapter.TryApplySlamPose(msg.slamPose);
-                    if (!roverApplied && msg.pose != null)
-                        roverApplied = roverAdapter.TryApplyPose(msg.pose);
-                }
-                if (!roverApplied && remoteState != null)
-                    remoteState.SetWarning("Rover pozu geldi ancak rover adapter bulunamadi.");
-                applied |= roverApplied;
-            }
-
-            if (msg.telemetry != null && remoteState != null)
-            {
-                remoteState.ApplyTelemetry(msg.telemetry, msg.sourceId, msg.timestampMs);
-                _lastTelemetryReceivedAt = Time.unscaledTime;
-                applied = true;
-            }
-
-            if (remoteState != null)
-            {
-                remoteState.ApplyOperationalState(msg);
-                applied = true;
-            }
-
-            if (ApplyMissionDelta(msg))
-                applied = true;
-
-            if (missionEngine != null)
-            {
-                if (missionEngine.ApplyMessage(msg))
-                    applied = true;
-                if (remoteState != null)
-                {
-                    remoteState.UpdateDeltaCounts(missionEngine.ObstacleCount, missionEngine.TargetCount, missionEngine.VoxelCount);
-                    remoteState.SetVehicleStatusLine(missionEngine.BuildVehicleStatusLine());
-                    remoteState.SetMissionPhaseAndStatus(missionEngine.CurrentPhase, missionEngine.CurrentPhaseStatus);
-                    if (missionEngine.HasRoverDetour)
-                        remoteState.SetWarning("Uyari: Rover için dinamik kaçınma rotası üretildi.");
-                }
-            }
-
-            if (imageryService != null && msg.imagery != null)
-            {
-                if (imageryService.TryApplyImagery(msg.imagery, msg.sourceId))
-                {
-                    applied = true;
-                    _lastTelemetryReceivedAt = Time.unscaledTime;
-                }
-            }
-
-            // ROVER rotasi (PDF: IHA VE Rover icin ortak ara nokta yonetimi):
-            // rover payload'indaki rota haritada ayri turuncu katman olarak cizilir.
-            if (isRoverPayload && msg.route != null && msg.route.waypoints != null && msg.route.waypoints.Length > 0)
-            {
-                if (roverRouteView == null)
-                {
-                    roverRouteView = FindObjectOfType<DigitalTwinRoverRouteView>();
-                    if (roverRouteView == null)
-                        roverRouteView = new GameObject("DigitalTwinRoverRouteView").AddComponent<DigitalTwinRoverRouteView>();
-                }
-                var roverPts = new List<Vector2d>(msg.route.waypoints.Length);
-                for (int i = 0; i < msg.route.waypoints.Length; i++)
-                    roverPts.Add(new Vector2d(msg.route.waypoints[i].latitude, msg.route.waypoints[i].longitude));
-                roverRouteView.SetRoute(roverPts);
-                applied = true;
+                PublishStatus(DigitalTwinApplyStatusCode.RouteApplyFailed, "Seçili olmayan kaynak aktif rotayı değiştiremez", msg.sequenceId, msg.timestampMs, msg.sourceId);
+                return false;
             }
 
             bool shouldApplyRoute = isUavPayload
                                     && msg.route != null
-                                    && msg.route.waypoints != null
-                                    && msg.route.waypoints.Length > 0;
+                                    && msg.route.waypoints != null;
             if (shouldApplyRoute)
             {
                 if (routeManager == null)
@@ -361,6 +301,125 @@ namespace GroundStation.DigitalTwin
                 applied = true;
             }
 
+            if (showPose && isUavPayload && (msg.pose != null || msg.slamPose != null))
+            {
+                if (abstractMap == null || drone == null)
+                {
+                    PublishStatus(DigitalTwinApplyStatusCode.MapOrDroneMissing, "Pose var ama map veya drone bagli degil", msg.sequenceId, msg.timestampMs, msg.sourceId);
+                    return false;
+                }
+
+                // Gorev gercegi (PDF 3.4.4): arac GPS ile ucar, VI-SLAM "golge modda" calisir.
+                // Drone GPS pozunu takip eder; GPS yoksa SLAM'e duser. Her iki konum da
+                // yorunge karsilastirma katmanina yayinlanir (GNSS-bagimsizlik kaniti).
+                if (!_localInput && drone.IsRunning) drone.StopRoute();
+                bool poseApplied = false;
+                TwinPoseSource poseSource = TwinPoseSource.None;
+                if (msg.pose != null)
+                {
+                    poseApplied = ApplyVehiclePose(msg.pose);
+                    if (poseApplied) poseSource = TwinPoseSource.Gps;
+                    OnUavGpsPose?.Invoke(new Vector2d(msg.pose.latitude, msg.pose.longitude));
+                }
+                if (msg.slamPose != null)
+                {
+                    LastSlamConfidence = msg.slamPose.confidence;
+                    OnUavSlamPose?.Invoke(new Vector2d(msg.slamPose.latitude, msg.slamPose.longitude));
+                    if (!poseApplied)
+                    {
+                        // GPS kesildi: SLAM kestirimine dus (PDF gorev senaryosu).
+                        poseApplied = ApplySlamPose(msg.slamPose);
+                        if (poseApplied) poseSource = TwinPoseSource.Slam;
+                    }
+                }
+                if (poseApplied) SetPoseSource(poseSource);
+                applied |= poseApplied;
+            }
+            else if (showPose && isRoverPayload && (msg.pose != null || msg.slamPose != null))
+            {
+                bool roverApplied = false;
+                if (roverAdapter != null)
+                {
+                    if (msg.slamPose != null)
+                        roverApplied = roverAdapter.TryApplySlamPose(msg.slamPose);
+                    if (!roverApplied && msg.pose != null)
+                        roverApplied = roverAdapter.TryApplyPose(msg.pose);
+                }
+                if (!roverApplied && remoteState != null)
+                    remoteState.SetWarning("Rover pozu geldi ancak rover adapter bulunamadi.");
+                applied |= roverApplied;
+            }
+
+            if (msg.telemetry != null && remoteState != null)
+            {
+                remoteState.ApplyTelemetry(msg.telemetry, msg.sourceId, msg.timestampMs, msg.vehicleType);
+                applied = true;
+            }
+
+            if (remoteState != null)
+            {
+                remoteState.ApplyOperationalState(msg);
+                applied = true;
+            }
+
+            if (selected && !IsReplaying && ApplyMissionDelta(msg))
+                applied = true;
+
+            if (selected && !IsReplaying && missionEngine != null)
+            {
+                if (missionEngine.ApplyMessage(msg))
+                    applied = true;
+                if (remoteState != null)
+                {
+                    remoteState.UpdateDeltaCounts(missionEngine.ObstacleCount, missionEngine.TargetCount, missionEngine.VoxelCount);
+                    remoteState.SetVehicleStatusLine(missionEngine.BuildVehicleStatusLine());
+                    remoteState.SetMissionPhaseAndStatus(missionEngine.CurrentPhase, missionEngine.CurrentPhaseStatus);
+                    if (missionEngine.HasRoverDetour)
+                        remoteState.SetWarning("Uyari: Rover için dinamik kaçınma rotası üretildi.");
+                }
+            }
+
+            if (imageryService != null && msg.imagery != null)
+            {
+                if (imageryService.TryApplyImagery(msg.imagery, msg.sourceId))
+                {
+                    applied = true;
+                    }
+            }
+
+            // ROVER rotasi (PDF: IHA VE Rover icin ortak ara nokta yonetimi):
+            // rover payload'indaki rota haritada ayri turuncu katman olarak cizilir.
+            if (isRoverPayload && msg.route != null && msg.route.waypoints != null)
+            {
+                if (roverRouteView == null)
+                {
+                    roverRouteView = FindObjectOfType<DigitalTwinRoverRouteView>();
+                    if (roverRouteView == null)
+                        roverRouteView = new GameObject("DigitalTwinRoverRouteView").AddComponent<DigitalTwinRoverRouteView>();
+                }
+                string mode = ResolveRouteMode(msg);
+                var roverPts = mode == "replace" ? new List<Vector2d>() : roverRouteView.CopyRoute();
+                for (int i = 0; i < msg.route.waypoints.Length; i++)
+                {
+                    var wp = msg.route.waypoints[i];
+                    int index = wp.index >= 0 ? wp.index : i;
+                    if (mode == "patch" && wp.operation == "remove")
+                    { if (index < roverPts.Count) roverPts.RemoveAt(index); }
+                    else if (mode == "patch" && index < roverPts.Count) roverPts[index] = new Vector2d(wp.latitude, wp.longitude);
+                    else roverPts.Add(new Vector2d(wp.latitude, wp.longitude));
+                }
+                roverRouteView.SetRoute(roverPts);
+                applied = true;
+            }
+
+
+            if (applied)
+            {
+                CommitValidation(msg);
+                LastAcceptedVehicle = DigitalTwinRemoteState.VehicleKey(msg.vehicleType);
+                LastAcceptedSource = msg.sourceId;
+                LastAcceptedForDisplay = selected && !_localInput;
+            }
             PublishStatus(applied ? DigitalTwinApplyStatusCode.Ok : DigitalTwinApplyStatusCode.MapOrDroneMissing,
                 applied ? "Mesaj uygulandi" : "Uygulanacak gecerli veri yok", msg.sequenceId, msg.timestampMs, msg.sourceId);
             return applied;
@@ -381,85 +440,39 @@ namespace GroundStation.DigitalTwin
             return "replace";
         }
 
-        private bool ValidateMessage(DigitalTwinMessageV1 msg, out DigitalTwinApplyStatusCode rejectCode, out string rejectMessage)
+        private string SourceKey(DigitalTwinMessageV1 msg) => (IsReplaying ? "replay/" : _localInput ? "sample/" : "live/")
+            + DigitalTwinRemoteState.VehicleKey(msg.vehicleType) + "/" + msg.sourceId;
+
+        private bool ValidateMessage(DigitalTwinMessageV1 msg, out DigitalTwinApplyStatusCode code, out string error)
         {
-            rejectCode = DigitalTwinApplyStatusCode.Ok;
-            rejectMessage = "";
-
-            if (msg == null)
+            code = DigitalTwinApplyStatusCode.InvalidSchema;
+            error = "Mesaj kimliği veya içeriği geçersiz";
+            if (msg == null || msg.schemaVersion != DigitalTwinJsonSchema.Version1 || string.IsNullOrWhiteSpace(msg.sourceId)
+                || string.IsNullOrWhiteSpace(msg.vehicleType) || (!TwinVehicleTypes.IsUav(msg.vehicleType) && !TwinVehicleTypes.IsRover(msg.vehicleType))) return false;
+            if (!_localInput && validateAuthToken && (string.IsNullOrEmpty(expectedAuthToken) || msg.authToken != expectedAuthToken))
+            { code = DigitalTwinApplyStatusCode.RejectedUnauthorized; error = "Auth token geçersiz"; return false; }
+            if (!_localInput && (msg.timestampMs <= 0 || msg.sequenceId <= 0)) return false;
+            long now = GetUnixTimeMs();
+            if (!_localInput && msg.timestampMs < now - System.Math.Max(1, maxPacketAgeMs))
+            { code = DigitalTwinApplyStatusCode.RejectedOldTimestamp; error = "Telemetri zaman aşımına uğramış"; return false; }
+            if (!_localInput && msg.timestampMs > now + System.Math.Max(0, maxFutureTimestampMs))
+            { code = DigitalTwinApplyStatusCode.RejectedFutureTimestamp; error = "Timestamp fazla gelecekte"; return false; }
+            if (!DigitalTwinMessageValidation.ValidPayload(msg, out error)) return false;
+            if (_sourceStates.TryGetValue(SourceKey(msg), out var state))
             {
-                rejectCode = DigitalTwinApplyStatusCode.InvalidJson;
-                rejectMessage = "Mesaj null";
-                return false;
+                bool reset = !IsReplaying && sourceResetTimeoutSeconds > 0 && Time.unscaledTime - state.lastSeenAt > sourceResetTimeoutSeconds;
+                if (!reset && rejectOutOfOrderSequence && msg.sequenceId > 0 && msg.sequenceId <= state.lastSequenceId)
+                { code = DigitalTwinApplyStatusCode.RejectedOutOfOrder; error = "Sequence sırası geride"; return false; }
+                if (!reset && rejectOlderTimestamps && msg.timestampMs > 0 && msg.timestampMs < state.lastTimestampMs)
+                { code = DigitalTwinApplyStatusCode.RejectedOldTimestamp; error = "Timestamp sırası geride"; return false; }
             }
+            code = DigitalTwinApplyStatusCode.Ok; error = ""; return true;
+        }
 
-            if (validateSchemaVersion &&
-                !string.IsNullOrEmpty(msg.schemaVersion) &&
-                !msg.schemaVersion.Equals(DigitalTwinJsonSchema.Version1, System.StringComparison.Ordinal))
-            {
-                rejectCode = DigitalTwinApplyStatusCode.InvalidSchema;
-                rejectMessage = "Schema version uyusmuyor";
-                return false;
-            }
-
-            if (validateAuthToken)
-            {
-                if (string.IsNullOrEmpty(expectedAuthToken) || string.IsNullOrEmpty(msg.authToken) ||
-                    !msg.authToken.Equals(expectedAuthToken, System.StringComparison.Ordinal))
-                {
-                    rejectCode = DigitalTwinApplyStatusCode.RejectedUnauthorized;
-                    rejectMessage = "Auth token gecersiz";
-                    return false;
-                }
-            }
-
-            // Kaynak basina dogrulama durumu (IHA ve Rover paralel gonderebilsin).
-            string sourceKey = msg.sourceId ?? "";
-            SourceValidationState state;
-            if (!_sourceStates.TryGetValue(sourceKey, out state))
-            {
-                state = new SourceValidationState();
-                _sourceStates[sourceKey] = state;
-            }
-
-            // Gonderici yeniden basladiysa (uzun sessizlik) sayaci sifirla — kalici red olmasin.
-            float now = Time.unscaledTime;
-            if (state.lastSeenAt > 0f && sourceResetTimeoutSeconds > 0f &&
-                now - state.lastSeenAt > sourceResetTimeoutSeconds)
-            {
-                state.lastSequenceId = -1;
-                state.lastTimestampMs = -1;
-            }
-
-            if (rejectOutOfOrderSequence && msg.sequenceId > 0 && state.lastSequenceId > 0 && msg.sequenceId <= state.lastSequenceId)
-            {
-                rejectCode = DigitalTwinApplyStatusCode.RejectedOutOfOrder;
-                rejectMessage = "Sequence sirasi geride (kaynak: " + sourceKey + ")";
-                return false;
-            }
-
-            if (rejectOlderTimestamps && msg.timestampMs > 0 && state.lastTimestampMs > 0 && msg.timestampMs < state.lastTimestampMs)
-            {
-                rejectCode = DigitalTwinApplyStatusCode.RejectedOldTimestamp;
-                rejectMessage = "Timestamp eski (kaynak: " + sourceKey + ")";
-                return false;
-            }
-
-            if (rejectFutureTimestamp && msg.timestampMs > 0)
-            {
-                long nowMs = GetUnixTimeMs();
-                if (msg.timestampMs - nowMs > maxFutureTimestampMs)
-                {
-                    rejectCode = DigitalTwinApplyStatusCode.RejectedFutureTimestamp;
-                    rejectMessage = "Timestamp fazla gelecekte";
-                    return false;
-                }
-            }
-
-            if (msg.sequenceId > 0) state.lastSequenceId = msg.sequenceId;
-            if (msg.timestampMs > 0) state.lastTimestampMs = msg.timestampMs;
-            state.lastSeenAt = now;
-            return true;
+        private void CommitValidation(DigitalTwinMessageV1 msg)
+        {
+            _sourceStates[SourceKey(msg)] = new SourceValidationState
+            { lastSequenceId = msg.sequenceId, lastTimestampMs = msg.timestampMs, lastSeenAt = Time.unscaledTime };
         }
 
         private bool ApplyVehiclePose(TwinPoseBlock pose)
@@ -492,6 +505,9 @@ namespace GroundStation.DigitalTwin
                     drone.transform.rotation = rot;
                 }
 
+                LastUavGeo = geo;
+                LastUavYaw = pose.yawDeg;
+                _lastUavPoseAt = Time.unscaledTime;
                 return true;
             }
             catch
@@ -610,7 +626,8 @@ namespace GroundStation.DigitalTwin
                 if (abstractMap.Root != null)
                     world.y = abstractMap.Root.position.y;
                 float alt = w.altitudeM > 0.5f ? w.altitudeM : 10f;
-                waypoint = new WaypointData(index, world, w.latitude, w.longitude, alt, null, null);
+                waypoint = new WaypointData(index, world, w.latitude, w.longitude, alt, null,
+                    new WaypointMetadata { speedOverride = w.speedMps, holdTimeSeconds = w.holdSeconds, actionId = w.action });
                 return true;
             }
             catch
@@ -671,36 +688,9 @@ namespace GroundStation.DigitalTwin
 
         public bool TryApplyPoseJson(string json)
         {
-            if (string.IsNullOrWhiteSpace(json) || abstractMap == null || drone == null)
-            {
-                PublishStatus(DigitalTwinApplyStatusCode.MapOrDroneMissing, "Map veya drone eksik", 0, 0, "");
-                return false;
-            }
-
-            json = json.Trim();
-            try
-            {
-                var pose = JsonUtility.FromJson<TwinPoseFlatLegacy>(json);
-                if (pose == null) return false;
-
-                var block = new TwinPoseBlock
-                {
-                    latitude = pose.lat,
-                    longitude = pose.lon,
-                    altitudeM = pose.alt,
-                    yawDeg = pose.yaw
-                };
-
-                bool ok = ApplyVehiclePose(block);
-                PublishStatus(ok ? DigitalTwinApplyStatusCode.Ok : DigitalTwinApplyStatusCode.MapOrDroneMissing,
-                    ok ? "Legacy pose uygulandi" : "Legacy pose uygulanamadi", 0, 0, "");
-                return ok;
-            }
-            catch
-            {
-                PublishStatus(DigitalTwinApplyStatusCode.InvalidJson, "Legacy JSON parse edilemedi", 0, 0, "");
-                return false;
-            }
+            // Legacy flat poses have no authenticated identity, sequence or timestamp.
+            PublishStatus(DigitalTwinApplyStatusCode.InvalidSchema, "Legacy poz yerine V1 mesaj kullanın", 0, 0, "");
+            return false;
         }
 
         private void PublishStatus(DigitalTwinApplyStatusCode code, string message, long sequenceId, long timestampMs, string sourceId)
